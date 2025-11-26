@@ -32,6 +32,7 @@ import {
   MessageCircle,
   Send,
   UserCheck,
+  AlertCircle,
 } from "lucide-react";
 
 // Firebase Imports
@@ -69,17 +70,31 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
 
-// --- Gemini API Configuration (Safe Check) ---
+// --- Gemini API Configuration (Robust Load) ---
+// v13 修改：使用更直接的方式讀取，並透過 try-catch 處理 CodeSandbox 的錯誤
 const getApiKey = () => {
   try {
-    if (typeof process !== "undefined" && process.env) {
-      return process.env.REACT_APP_GEMINI_API_KEY || "";
-    }
-  } catch (e) {}
+    // Vercel 在打包時會尋找這個特定的字串進行替換
+    // 我們不檢查 process 是否存在，直接存取，讓 catch 去處理錯誤
+    const key = process.env.REACT_APP_GEMINI_API_KEY;
+    if (key) return key;
+  } catch (e) {
+    // 在純瀏覽器環境忽略錯誤
+    console.log("Env var read failed (expected in sandbox):", e);
+  }
   return "";
 };
+
 const GEMINI_API_KEY = getApiKey();
 const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
+
+// Debugging Log
+console.log(
+  "App Loaded. API Key status:",
+  GEMINI_API_KEY
+    ? "Loaded (Length: " + GEMINI_API_KEY.length + ")"
+    : "Not Found"
+);
 
 // --- Market Simulation Data ---
 const MARKET_NEWS = [
@@ -131,7 +146,7 @@ const withTimeout = (promise, ms = 10000) => {
 // --- Gemini API Helper ---
 const callGemini = async (prompt, systemContext) => {
   if (!GEMINI_API_KEY) {
-    return "錯誤：小豬找不到啟動金鑰！請家長到 Vercel 設定 REACT_APP_GEMINI_API_KEY。";
+    return "錯誤：找不到金鑰 (Key Not Found)。請檢查 Vercel 環境變數設定。";
   }
 
   try {
@@ -150,13 +165,15 @@ const callGemini = async (prompt, systemContext) => {
     if (!response.ok) {
       const errData = await response.json();
       console.error("Gemini API Error:", errData);
-      throw new Error(`API Error: ${response.status}`);
+      throw new Error(
+        `API Error: ${response.status} - ${errData.error?.message || "Unknown"}`
+      );
     }
     const data = await response.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text || "小豬正在思考...";
   } catch (error) {
     console.error("Gemini Call Failed:", error);
-    return "連線失敗，請檢查 API 金鑰。";
+    return `連線失敗 (${error.message})。請稍後再試。`;
   }
 };
 
@@ -172,24 +189,20 @@ const AVATARS = {
 
 // --- Components ---
 
-// 1. Savings Trend Chart
 const SavingsChart = ({ transactions }) => {
   const data = useMemo(() => {
     if (!transactions || transactions.length === 0) return [];
-
     const sortedTxs = [...transactions].sort(
       (a, b) => a.timestamp - b.timestamp
     );
     let currentBal = 0;
     const points = [];
-
     sortedTxs.forEach((t) => {
       const val = parseFloat(t.amount);
       if (t.type === "income" || t.type === "interest") currentBal += val;
       else currentBal -= val;
       points.push({ date: t.timestamp, value: Math.max(0, currentBal) });
     });
-
     return points.slice(-20);
   }, [transactions]);
 
@@ -198,7 +211,6 @@ const SavingsChart = ({ transactions }) => {
   const width = 300;
   const height = 100;
   const padding = 5;
-
   const maxVal = Math.max(...data.map((d) => d.value)) * 1.1;
   const minVal = 0;
   const minTime = data[0].date;
@@ -216,7 +228,6 @@ const SavingsChart = ({ transactions }) => {
   data.forEach((d) => {
     pathD += ` L ${getX(d.date)} ${getY(d.value)}`;
   });
-
   const areaD = `${pathD} L ${getX(
     data[data.length - 1].date
   )} ${height} L ${getX(data[0].date)} ${height} Z`;
@@ -255,36 +266,26 @@ const SavingsChart = ({ transactions }) => {
   );
 };
 
-// 2. Change PIN Modal
 const ChangePinModal = ({ onClose, onUpdate, currentPin }) => {
   const [oldPin, setOldPin] = useState("");
   const [newPin, setNewPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (oldPin !== currentPin) {
-      alert("舊密碼不正確");
-      return;
-    }
-    if (newPin.length !== 4) {
-      alert("新密碼必須是 4 位數字");
-      return;
-    }
-    if (newPin !== confirmPin) {
-      alert("兩次新密碼輸入不一致");
-      return;
-    }
-    onUpdate(newPin);
-  };
-
   return (
     <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4">
       <div className="bg-white w-full max-w-xs rounded-3xl p-6 shadow-2xl animate-in zoom-in-95">
         <h3 className="text-xl font-bold mb-4 text-slate-800 text-center">
           修改家長密碼
         </h3>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (oldPin !== currentPin) return alert("舊密碼不正確");
+            if (newPin.length !== 4) return alert("新密碼必須是 4 位數字");
+            if (newPin !== confirmPin) return alert("兩次新密碼不一致");
+            onUpdate(newPin);
+          }}
+          className="space-y-4"
+        >
           <input
             type="password"
             maxLength="4"
@@ -330,7 +331,6 @@ const ChangePinModal = ({ onClose, onUpdate, currentPin }) => {
   );
 };
 
-// 3. Smart Piggy AI
 const SmartPiggyAI = ({ userRole, userName, balance, rates, onClose }) => {
   const [messages, setMessages] = useState([
     {
@@ -354,22 +354,15 @@ const SmartPiggyAI = ({ userRole, userName, balance, rates, onClose }) => {
     setMessages((prev) => [...prev, { role: "user", text: userMsg }]);
     setLoading(true);
 
-    const systemContext = `
-      你是一個專為家庭銀行 App 設計的 AI 理財顧問，名字叫「智慧小豬」。
-      你的對話對象是：${
-        userRole === "parent" ? "家長" : "小孩"
-      }，名字叫 ${userName}。
-      目前的財務狀況：
-      - 餘額：${balance} 元
-      - 通膨率：${formatPercent(rates.inflation)}
-      - 加碼利息：${formatPercent(rates.bonus)}
-      - 總年利率：${formatPercent(rates.inflation + rates.bonus)}
-      
-      原則：鼓勵儲蓄，解釋複利，語氣活潑可愛。
-    `;
-
-    const aiResponse = await callGemini(userMsg, systemContext);
-    setMessages((prev) => [...prev, { role: "ai", text: aiResponse }]);
+    const context = `你是一個專為家庭銀行 App 設計的 AI 理財顧問「智慧小豬」。對象：${
+      userRole === "parent" ? "家長" : "小孩"
+    } (${userName})。財務狀況：餘額 ${balance}元，通膨率 ${formatPercent(
+      rates.inflation
+    )}，加碼利息 ${formatPercent(
+      rates.bonus
+    )}。原則：鼓勵儲蓄，解釋複利，語氣活潑。`;
+    const res = await callGemini(userMsg, context);
+    setMessages((prev) => [...prev, { role: "ai", text: res }]);
     setLoading(false);
   };
 
@@ -420,10 +413,8 @@ const SmartPiggyAI = ({ userRole, userName, balance, rates, onClose }) => {
             {suggestions.map((s) => (
               <button
                 key={s}
-                onClick={() => {
-                  setInput(s);
-                }}
-                className="whitespace-nowrap bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full text-xs font-bold"
+                onClick={() => setInput(s)}
+                className="whitespace-nowrap bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full text-xs font-bold mr-2"
               >
                 {s}
               </button>
@@ -452,15 +443,14 @@ const SmartPiggyAI = ({ userRole, userName, balance, rates, onClose }) => {
   );
 };
 
-// PinPad & CreateUserModal omitted for brevity but are same as v10
 const PinPad = ({ onSuccess, onCancel, targetPin, title, subTitle }) => {
   const [pin, setPin] = useState("");
-  const handleNum = (num) => {
-    const newPin = pin + num;
-    if (newPin.length <= 4) {
-      setPin(newPin);
-      if (newPin.length === 4) {
-        if (newPin === targetPin) onSuccess();
+  const handleNum = (n) => {
+    const next = pin + n;
+    if (next.length <= 4) {
+      setPin(next);
+      if (next.length === 4) {
+        if (next === targetPin) onSuccess();
         else setTimeout(() => setPin(""), 500);
       }
     }
@@ -490,10 +480,7 @@ const PinPad = ({ onSuccess, onCancel, targetPin, title, subTitle }) => {
               {n}
             </button>
           ))}
-          <button
-            onClick={onCancel}
-            className="h-14 rounded-xl text-red-500 font-bold"
-          >
+          <button onClick={onCancel} className="h-14 text-red-500 font-bold">
             取消
           </button>
           <button
@@ -504,7 +491,7 @@ const PinPad = ({ onSuccess, onCancel, targetPin, title, subTitle }) => {
           </button>
           <button
             onClick={() => setPin("")}
-            className="h-14 rounded-xl text-slate-500 font-bold"
+            className="h-14 text-slate-500 font-bold"
           >
             清除
           </button>
@@ -585,7 +572,6 @@ const CentralBankControl = ({ rates, onUpdateRates, onToggleAuto }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [inflation, setInflation] = useState(rates.inflation * 100);
   const [bonus, setBonus] = useState(rates.bonus * 100);
-
   return (
     <div className="mb-4">
       <button
@@ -693,7 +679,7 @@ const LoginScreen = ({ onLogin, onGuestLogin }) => (
       <div className="bg-blue-600 w-24 h-24 rounded-full flex items-center justify-center mx-auto shadow-lg">
         <PiggyBank size={48} className="text-white" />
       </div>
-      <h1 className="text-3xl font-bold text-slate-800">家庭銀行 v12.0</h1>
+      <h1 className="text-3xl font-bold text-slate-800">家庭銀行 v13.0</h1>
       <p className="text-slate-500 mb-8">建立您專屬的虛擬家庭銀行</p>
       <button
         onClick={onLogin}
@@ -724,7 +710,6 @@ export default function FamilyBankApp() {
   const [pinPadConfig, setPinPadConfig] = useState(null);
   const [showAiChat, setShowAiChat] = useState(false);
   const [showChangePin, setShowChangePin] = useState(false);
-
   const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [balance, setBalance] = useState(0);
@@ -736,7 +721,6 @@ export default function FamilyBankApp() {
     lastUpdate: 0,
   });
   const [parentPin, setParentPin] = useState("8888");
-
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [isTxModalOpen, setIsTxModalOpen] = useState(false);
   const [transType, setTransType] = useState("expense");
@@ -855,13 +839,11 @@ export default function FamilyBankApp() {
       0
     );
     setBalance(bal);
-
     const checkInterest = async () => {
       const last = selectedAccount.lastInterestDate || Date.now();
       const now = Date.now();
       const days = Math.floor((now - last) / 86400000);
       const rate = rates.inflation + rates.bonus;
-
       if (days >= 1) {
         const memRef = doc(
           db,
@@ -874,7 +856,6 @@ export default function FamilyBankApp() {
         );
         await updateDoc(memRef, { lastInterestDate: now });
         if (bal > 0) {
-          // 每日複利公式：A = P * (1 + r/365)^t - P
           const dailyRate = rate / 365;
           const earned = Math.floor(bal * (Math.pow(1 + dailyRate, days) - 1));
           if (earned > 0) {
@@ -903,7 +884,6 @@ export default function FamilyBankApp() {
     checkInterest();
   }, [transactions, selectedAccount, rates, googleUser]);
 
-  // Handlers omitted for brevity (same as before)
   const handleGoogleLogin = async () => {
     try {
       await signInWithPopup(auth, new GoogleAuthProvider());
@@ -968,7 +948,6 @@ export default function FamilyBankApp() {
     );
 
   if (!role && !selectedAccount) {
-    // Home Selection Screen
     return (
       <div className="min-h-screen bg-slate-100 pb-10">
         <NewsTicker news={rates.news} />
@@ -1047,7 +1026,6 @@ export default function FamilyBankApp() {
   }
 
   if (role === "parent" && !selectedAccount) {
-    // Parent Dashboard
     return (
       <div className="min-h-screen bg-slate-50 p-6">
         <header className="flex justify-between mb-6">
@@ -1170,7 +1148,6 @@ export default function FamilyBankApp() {
     );
   }
 
-  // Detail View Logic
   const isParentView = role === "parent";
   const totalRate = rates.inflation + rates.bonus;
   const monthlyInterestProj = Math.floor((balance * totalRate) / 12);
@@ -1215,7 +1192,6 @@ export default function FamilyBankApp() {
       </header>
       <main className="p-5 space-y-4 max-w-lg mx-auto">
         <SavingsChart transactions={transactions} />
-
         <button
           onClick={() => setShowAiChat(true)}
           className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-4 rounded-2xl flex items-center justify-between shadow-lg"
@@ -1229,9 +1205,7 @@ export default function FamilyBankApp() {
           </div>
           <MessageCircle />
         </button>
-
         {isParentView ? (
-          // Parent View: Full Controls
           <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
             <h3 className="text-slate-500 text-sm font-bold mb-3 uppercase tracking-wider">
               資金管理
@@ -1258,7 +1232,6 @@ export default function FamilyBankApp() {
             </div>
           </div>
         ) : (
-          // Child View: Projection & Withdraw Only
           <>
             <div className="bg-white p-4 rounded-2xl shadow-sm border border-blue-100 flex items-center justify-between">
               <div>
@@ -1276,7 +1249,6 @@ export default function FamilyBankApp() {
                 <TrendingUp size={24} />
               </div>
             </div>
-
             <button
               onClick={() => {
                 setTransType("expense");
@@ -1288,7 +1260,6 @@ export default function FamilyBankApp() {
             </button>
           </>
         )}
-
         <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
           <div className="p-4 border-b bg-slate-50 flex gap-2 font-bold text-slate-700">
             <History /> 交易紀錄
@@ -1388,6 +1359,13 @@ export default function FamilyBankApp() {
           balance={balance}
           rates={rates}
           onClose={() => setShowAiChat(false)}
+        />
+      )}
+      {showChangePin && (
+        <ChangePinModal
+          onClose={() => setShowChangePin(false)}
+          onUpdate={handleUpdateParentPin}
+          currentPin={parentPin}
         />
       )}
     </div>
