@@ -32,7 +32,10 @@ import {
   MessageCircle,
   Send,
   UserCheck,
-  AlertCircle,
+  Trash2,
+  Edit,
+  Save,
+  AlertTriangle,
 } from "lucide-react";
 
 // Firebase Imports
@@ -45,6 +48,7 @@ import {
   doc,
   updateDoc,
   setDoc,
+  deleteDoc,
 } from "firebase/firestore";
 import {
   getAuth,
@@ -70,31 +74,16 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
 
-// --- Gemini API Configuration (Robust Load) ---
-// v13 修改：使用更直接的方式讀取，並透過 try-catch 處理 CodeSandbox 的錯誤
+// --- Gemini API Configuration ---
 const getApiKey = () => {
   try {
-    // Vercel 在打包時會尋找這個特定的字串進行替換
-    // 我們不檢查 process 是否存在，直接存取，讓 catch 去處理錯誤
     const key = process.env.REACT_APP_GEMINI_API_KEY;
     if (key) return key;
-  } catch (e) {
-    // 在純瀏覽器環境忽略錯誤
-    console.log("Env var read failed (expected in sandbox):", e);
-  }
+  } catch (e) {}
   return "";
 };
-
 const GEMINI_API_KEY = getApiKey();
 const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
-
-// Debugging Log
-console.log(
-  "App Loaded. API Key status:",
-  GEMINI_API_KEY
-    ? "Loaded (Length: " + GEMINI_API_KEY.length + ")"
-    : "Not Found"
-);
 
 // --- Market Simulation Data ---
 const MARKET_NEWS = [
@@ -143,12 +132,8 @@ const withTimeout = (promise, ms = 10000) => {
   ]);
 };
 
-// --- Gemini API Helper ---
 const callGemini = async (prompt, systemContext) => {
-  if (!GEMINI_API_KEY) {
-    return "錯誤：找不到金鑰 (Key Not Found)。請檢查 Vercel 環境變數設定。";
-  }
-
+  if (!GEMINI_API_KEY) return "錯誤：找不到金鑰。請檢查 Vercel 環境變數設定。";
   try {
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
@@ -161,19 +146,12 @@ const callGemini = async (prompt, systemContext) => {
         }),
       }
     );
-
-    if (!response.ok) {
-      const errData = await response.json();
-      console.error("Gemini API Error:", errData);
-      throw new Error(
-        `API Error: ${response.status} - ${errData.error?.message || "Unknown"}`
-      );
-    }
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const data = await response.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text || "小豬正在思考...";
   } catch (error) {
     console.error("Gemini Call Failed:", error);
-    return `連線失敗 (${error.message})。請稍後再試。`;
+    return `連線失敗 (${error.message})。`;
   }
 };
 
@@ -188,6 +166,60 @@ const AVATARS = {
 };
 
 // --- Components ---
+
+const FormattedText = ({ text }) => {
+  if (!text) return null;
+  return text.split("\n").map((line, index) => {
+    const parts = line.split(/\*\*(.*?)\*\*/g);
+    return (
+      <div key={index} className="min-h-[1.2em]">
+        {parts.map((part, i) =>
+          i % 2 === 1 ? (
+            <strong key={i} className="text-indigo-700 font-bold">
+              {part}
+            </strong>
+          ) : (
+            part
+          )
+        )}
+      </div>
+    );
+  });
+};
+
+const DeleteConfirmModal = ({ target, onClose, onConfirm }) => {
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center p-4 animate-in zoom-in-95">
+      <div className="bg-white w-full max-w-xs rounded-3xl p-6 shadow-2xl text-center">
+        <div className="bg-red-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+          <AlertTriangle size={32} className="text-red-500" />
+        </div>
+        <h3 className="text-xl font-bold text-slate-800 mb-2">
+          確定要刪除嗎？
+        </h3>
+        <p className="text-sm text-slate-500 mb-6">
+          將會永久刪除{" "}
+          <span className="font-bold text-red-500">{target?.name}</span>{" "}
+          的所有資料與交易紀錄，此動作無法復原。
+        </p>
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold"
+          >
+            取消
+          </button>
+          <button
+            onClick={() => onConfirm(target.id)}
+            className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold shadow-lg hover:bg-red-600"
+          >
+            確認刪除
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const SavingsChart = ({ transactions }) => {
   const data = useMemo(() => {
@@ -358,9 +390,13 @@ const SmartPiggyAI = ({ userRole, userName, balance, rates, onClose }) => {
       userRole === "parent" ? "家長" : "小孩"
     } (${userName})。財務狀況：餘額 ${balance}元，通膨率 ${formatPercent(
       rates.inflation
-    )}，加碼利息 ${formatPercent(
-      rates.bonus
-    )}。原則：鼓勵儲蓄，解釋複利，語氣活潑。`;
+    )}，加碼利息 ${formatPercent(rates.bonus)}。
+    重要原則：
+    1. 請勿使用 Markdown 表格 (Table)。
+    2. 請使用條列式清單 (Bulleted List) 或 Emoji 來呈現資訊。
+    3. 金額或重點請使用雙星號 **粗體** 標示。
+    4. 回答請活潑、具鼓勵性且易讀。`;
+
     const res = await callGemini(userMsg, context);
     setMessages((prev) => [...prev, { role: "ai", text: res }]);
     setLoading(false);
@@ -394,13 +430,13 @@ const SmartPiggyAI = ({ userRole, userName, balance, rates, onClose }) => {
               }`}
             >
               <div
-                className={`max-w-[80%] p-3 rounded-2xl text-sm ${
+                className={`max-w-[85%] p-3 rounded-2xl text-sm whitespace-pre-wrap ${
                   m.role === "user"
                     ? "bg-indigo-600 text-white"
                     : "bg-white text-slate-700 shadow-sm"
                 }`}
               >
-                {m.text}
+                {m.role === "ai" ? <FormattedText text={m.text} /> : m.text}
               </div>
             </div>
           ))}
@@ -501,18 +537,25 @@ const PinPad = ({ onSuccess, onCancel, targetPin, title, subTitle }) => {
   );
 };
 
-const CreateUserModal = ({ onClose, onCreate }) => {
-  const [name, setName] = useState("");
-  const [pin, setPin] = useState("");
-  const [icon, setIcon] = useState("smile");
+const MemberFormModal = ({
+  onClose,
+  onSubmit,
+  initialData,
+  mode = "create",
+}) => {
+  const [name, setName] = useState(initialData?.name || "");
+  const [pin, setPin] = useState(initialData?.pin || "");
+  const [icon, setIcon] = useState(initialData?.icon || "smile");
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl">
-        <h3 className="text-xl font-bold mb-4">新增家庭成員</h3>
+      <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl animate-in zoom-in-95">
+        <h3 className="text-xl font-bold mb-4">
+          {mode === "create" ? "新增成員" : "編輯成員"}
+        </h3>
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (name && pin.length === 4) onCreate(name, icon, pin);
+            if (name && pin.length === 4) onSubmit(name, icon, pin);
           }}
           className="space-y-4"
         >
@@ -530,16 +573,16 @@ const CreateUserModal = ({ onClose, onCreate }) => {
             value={pin}
             onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
             className="w-full p-3 bg-slate-50 rounded-xl"
-            placeholder="4位數密碼"
+            placeholder="4位數密碼 (PIN)"
             required
           />
-          <div className="flex gap-2 overflow-x-auto pb-2">
+          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
             {Object.keys(AVATARS).map((k) => (
               <button
                 key={k}
                 type="button"
                 onClick={() => setIcon(k)}
-                className={`p-3 rounded-xl ${
+                className={`p-3 rounded-xl flex-shrink-0 ${
                   icon === k ? "bg-blue-100 ring-2 ring-blue-500" : ""
                 }`}
               >
@@ -551,15 +594,15 @@ const CreateUserModal = ({ onClose, onCreate }) => {
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 py-3 text-slate-500"
+              className="flex-1 py-3 text-slate-500 font-bold"
             >
               取消
             </button>
             <button
               type="submit"
-              className="flex-1 py-3 bg-blue-600 text-white rounded-xl"
+              className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold"
             >
-              建立
+              {mode === "create" ? "建立" : "儲存"}
             </button>
           </div>
         </form>
@@ -679,7 +722,7 @@ const LoginScreen = ({ onLogin, onGuestLogin }) => (
       <div className="bg-blue-600 w-24 h-24 rounded-full flex items-center justify-center mx-auto shadow-lg">
         <PiggyBank size={48} className="text-white" />
       </div>
-      <h1 className="text-3xl font-bold text-slate-800">家庭銀行 v13.0</h1>
+      <h1 className="text-3xl font-bold text-slate-800">家庭銀行 v18.0</h1>
       <p className="text-slate-500 mb-8">建立您專屬的虛擬家庭銀行</p>
       <button
         onClick={onLogin}
@@ -721,7 +764,9 @@ export default function FamilyBankApp() {
     lastUpdate: 0,
   });
   const [parentPin, setParentPin] = useState("8888");
-  const [showCreateUser, setShowCreateUser] = useState(false);
+
+  const [modalConfig, setModalConfig] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [isTxModalOpen, setIsTxModalOpen] = useState(false);
   const [transType, setTransType] = useState("expense");
   const [amount, setAmount] = useState("");
@@ -743,7 +788,11 @@ export default function FamilyBankApp() {
     if (!googleUser) return;
     const unsubAcc = onSnapshot(
       collection(db, "artifacts", appId, "users", googleUser.uid, "members"),
-      (s) => setAccounts(s.docs.map((d) => ({ id: d.id, ...d.data() })))
+      (s) => {
+        const data = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+        data.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+        setAccounts(data);
+      }
     );
     const ratesRef = doc(
       db,
@@ -758,15 +807,20 @@ export default function FamilyBankApp() {
       if (s.exists()) {
         const d = s.data();
         setRates(d);
-        if (d.isAuto && Date.now() - (d.lastUpdate || 0) > 86400000)
+        // Force update if news is placeholder OR 24h passed
+        const needsUpdate =
+          Date.now() - (d.lastUpdate || 0) > 86400000 ||
+          d.news === "市場觀察中...";
+        if (d.isAuto && needsUpdate) {
           updateMarketConditions(d.inflation);
+        }
       } else
         setDoc(ratesRef, {
           inflation: 0.025,
           bonus: 0.05,
           isAuto: true,
           news: "市場觀察中...",
-          lastUpdate: Date.now(),
+          lastUpdate: 0,
         });
     });
     const unsubSec = onSnapshot(
@@ -792,14 +846,33 @@ export default function FamilyBankApp() {
     if (!googleUser) return;
     const drift = (Math.random() - 0.5) * 0.03;
     let newCPI = Math.max(0.005, Math.min(0.08, current + drift));
-    const item =
-      MARKET_NEWS.find((n) => newCPI * 100 >= n.min && newCPI * 100 < n.max) ||
-      MARKET_NEWS[0];
+
+    // NEW: Ask Gemini for a realistic headline
+    const today = new Date().toLocaleDateString("zh-TW");
+    const newsPrompt = `今天是 ${today}。請扮演一位財經記者，根據真實世界的經濟氛圍（例如 AI 發展、綠能、通膨狀況、全球股市），為小學生寫一則 20 字以內的簡易財經快訊。請只回傳標題內容，不要有任何引號或解釋。`;
+
+    let aiNews = "";
+    try {
+      aiNews = await callGemini(newsPrompt, "You are a reporter.");
+    } catch (e) {
+      console.error("News gen failed", e);
+    }
+
+    if (!aiNews || aiNews.includes("錯誤")) {
+      const item =
+        MARKET_NEWS.find(
+          (n) => newCPI * 100 >= n.min && newCPI * 100 < n.max
+        ) || MARKET_NEWS[0];
+      aiNews = item.text;
+    }
+
     await updateDoc(
       doc(db, "artifacts", appId, "users", googleUser.uid, "settings", "rates"),
       {
         inflation: newCPI,
-        news: `今日 CPI ${(newCPI * 100).toFixed(1)}%。${item.text}`,
+        news: `${today} 財經快訊：${aiNews} (CPI: ${(newCPI * 100).toFixed(
+          1
+        )}%)`,
         lastUpdate: Date.now(),
       }
     );
@@ -823,7 +896,7 @@ export default function FamilyBankApp() {
         const txs = s.docs
           .map((d) => ({ id: d.id, ...d.data() }))
           .filter((t) => t.memberId === selectedAccount.id)
-          .sort((a, b) => a.timestamp - b.timestamp);
+          .sort((a, b) => b.timestamp - a.timestamp);
         setTransactions(txs);
       }
     );
@@ -898,9 +971,23 @@ export default function FamilyBankApp() {
       alert(e.message);
     }
   };
+
   const handleTransaction = async (e) => {
     e.preventDefault();
     if (!amount || isSubmitting) return;
+
+    const num = parseFloat(amount);
+    if (num <= 0) {
+      alert("金額必須大於 0");
+      return;
+    }
+
+    // v18 Fix: Add Balance Check
+    if (transType === "expense" && num > balance) {
+      alert("餘額不足！無法取出比存款還多的錢。");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await withTimeout(
@@ -915,7 +1002,7 @@ export default function FamilyBankApp() {
           ),
           {
             type: transType,
-            amount: parseFloat(amount),
+            amount: num,
             note: note || (transType === "income" ? "零用錢" : "消費"),
             timestamp: Date.now(),
             memberId: selectedAccount.id,
@@ -930,6 +1017,63 @@ export default function FamilyBankApp() {
       alert("交易失敗");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const confirmDeleteMember = async (id) => {
+    try {
+      await deleteDoc(
+        doc(db, "artifacts", appId, "users", googleUser.uid, "members", id)
+      );
+      setDeleteTarget(null);
+    } catch (e) {
+      console.error(e);
+      alert("刪除失敗");
+    }
+  };
+
+  const handleMemberSubmit = async (name, icon, pin) => {
+    try {
+      if (modalConfig.type === "create") {
+        await addDoc(
+          collection(
+            db,
+            "artifacts",
+            appId,
+            "users",
+            googleUser.uid,
+            "members"
+          ),
+          {
+            name,
+            icon,
+            pin,
+            createdAt: Date.now(),
+            lastInterestDate: Date.now(),
+          }
+        );
+      } else {
+        await updateDoc(
+          doc(
+            db,
+            "artifacts",
+            appId,
+            "users",
+            googleUser.uid,
+            "members",
+            modalConfig.data.id
+          ),
+          {
+            name,
+            icon,
+            pin,
+          }
+        );
+      }
+      setModalConfig(null);
+    } catch (e) {
+      console.error(e);
+      alert("操作失敗");
     }
   };
 
@@ -1080,47 +1224,62 @@ export default function FamilyBankApp() {
         />
         <div className="grid grid-cols-2 gap-4 mt-8">
           {accounts.map((acc) => (
-            <button
+            <div
               key={acc.id}
-              onClick={() => setSelectedAccount(acc)}
-              className="bg-white p-6 rounded-2xl shadow-sm border flex flex-col items-center"
+              className="bg-white p-6 rounded-2xl shadow-sm border flex flex-col items-center relative group"
             >
-              <div className="p-4 rounded-full mb-3 bg-blue-100 text-blue-600">
-                {AVATARS[acc.icon] || <User />}
+              <div className="absolute top-2 right-2 flex gap-1 opacity-100">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setModalConfig({ type: "edit", data: acc });
+                  }}
+                  className="p-1.5 bg-slate-100 text-slate-500 rounded-full hover:bg-blue-100 hover:text-blue-600"
+                >
+                  <Edit size={14} />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleteTarget(acc);
+                  }}
+                  className="p-1.5 bg-slate-100 text-slate-500 rounded-full hover:bg-red-100 hover:text-red-600"
+                >
+                  <Trash2 size={14} />
+                </button>
               </div>
-              <span className="font-bold">{acc.name}</span>
-            </button>
+              <button
+                onClick={() => setSelectedAccount(acc)}
+                className="flex flex-col items-center w-full mt-2"
+              >
+                <div className="p-4 rounded-full mb-3 bg-blue-100 text-blue-600">
+                  {AVATARS[acc.icon] || <User />}
+                </div>
+                <span className="font-bold">{acc.name}</span>
+              </button>
+            </div>
           ))}
           <button
-            onClick={() => setShowCreateUser(true)}
-            className="bg-slate-100 border-2 border-dashed p-6 rounded-2xl flex flex-col items-center justify-center text-slate-400"
+            onClick={() => setModalConfig({ type: "create" })}
+            className="bg-slate-100 border-2 border-dashed p-6 rounded-2xl flex flex-col items-center justify-center text-slate-400 hover:bg-slate-200"
           >
             <Plus size={32} />
             <span className="font-bold">新增</span>
           </button>
         </div>
-        {showCreateUser && (
-          <CreateUserModal
-            onClose={() => setShowCreateUser(false)}
-            onCreate={(name, icon, pin) =>
-              addDoc(
-                collection(
-                  db,
-                  "artifacts",
-                  appId,
-                  "users",
-                  googleUser.uid,
-                  "members"
-                ),
-                {
-                  name,
-                  icon,
-                  pin,
-                  createdAt: Date.now(),
-                  lastInterestDate: Date.now(),
-                }
-              ).then(() => setShowCreateUser(false))
-            }
+        {modalConfig && (
+          <MemberFormModal
+            onClose={() => setModalConfig(null)}
+            onSubmit={handleMemberSubmit}
+            initialData={modalConfig.data}
+            mode={modalConfig.type}
+          />
+        )}
+        {deleteTarget && (
+          <DeleteConfirmModal
+            target={deleteTarget}
+            onClose={() => setDeleteTarget(null)}
+            onConfirm={confirmDeleteMember}
           />
         )}
         {showChangePin && (
@@ -1323,6 +1482,7 @@ export default function FamilyBankApp() {
             <form onSubmit={handleTransaction} className="space-y-4">
               <input
                 type="number"
+                min="0"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 autoFocus
