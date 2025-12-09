@@ -37,6 +37,11 @@ import {
   Save,
   AlertTriangle,
   Filter,
+  Award,
+  Star,
+  Gift,
+  Crown,
+  Palette,
 } from "lucide-react";
 
 // Firebase Imports
@@ -87,7 +92,7 @@ const getApiKey = () => {
 const GEMINI_API_KEY = getApiKey();
 const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
 
-// --- Market Simulation Data ---
+// --- Constants & Data ---
 const MARKET_NEWS = [
   { min: 0, max: 2, text: "風調雨順，物價平穩，通膨受控。", trend: "stable" },
   { min: 2, max: 3, text: "國際油價小幅上漲，運費增加。", trend: "up" },
@@ -102,18 +107,96 @@ const MARKET_NEWS = [
   { min: 0, max: 1, text: "經濟稍微冷卻，商品正在打折促銷。", trend: "down" },
 ];
 
+const THEMES = {
+  ocean: {
+    name: "海洋藍",
+    bg: "bg-slate-50",
+    header: "bg-blue-600",
+    accent: "text-blue-600",
+    card: "bg-white",
+    chart: "#2563eb",
+    gradient: "from-blue-500 to-cyan-400",
+  },
+  sunset: {
+    name: "夕陽紅",
+    bg: "bg-orange-50",
+    header: "bg-orange-500",
+    accent: "text-orange-600",
+    card: "bg-white",
+    chart: "#ea580c",
+    gradient: "from-orange-500 to-pink-500",
+  },
+  forest: {
+    name: "森林綠",
+    bg: "bg-emerald-50",
+    header: "bg-emerald-600",
+    accent: "text-emerald-600",
+    card: "bg-white",
+    chart: "#059669",
+    gradient: "from-emerald-500 to-teal-400",
+  },
+  space: {
+    name: "星空紫",
+    bg: "bg-slate-900",
+    header: "bg-indigo-900",
+    accent: "text-indigo-400",
+    card: "bg-slate-800 text-white",
+    chart: "#818cf8",
+    gradient: "from-indigo-600 to-purple-600",
+    isDark: true,
+  },
+};
+
+const ACHIEVEMENTS = [
+  {
+    id: "first_save",
+    name: "第一桶金",
+    desc: "存入第一筆錢",
+    icon: <Star size={24} />,
+    condition: (bal, txs) => txs.some((t) => t.type === "income"),
+  },
+  {
+    id: "saver_1000",
+    name: "小小儲蓄家",
+    desc: "存款達到 $1,000",
+    icon: <PiggyBank size={24} />,
+    condition: (bal) => bal >= 1000,
+  },
+  {
+    id: "saver_5000",
+    name: "超級銀行家",
+    desc: "存款達到 $5,000",
+    icon: <Crown size={24} />,
+    condition: (bal) => bal >= 5000,
+  },
+  {
+    id: "interest_earner",
+    name: "複利魔法師",
+    desc: "獲得過利息收入",
+    icon: <Sparkles size={24} />,
+    condition: (bal, txs) => txs.some((t) => t.type === "interest"),
+  },
+];
+
+const AVATARS = {
+  baby: <Baby size={32} />,
+  cat: <Cat size={32} />,
+  dog: <Dog size={32} />,
+  rabbit: <Rabbit size={32} />,
+  fish: <Fish size={32} />,
+  bird: <Bird size={32} />,
+  smile: <Smile size={32} />,
+};
+
 // --- Utility Functions ---
-const formatCurrency = (amount) => {
-  return new Intl.NumberFormat("zh-TW", {
+const formatCurrency = (amount) =>
+  new Intl.NumberFormat("zh-TW", {
     style: "currency",
     currency: "TWD",
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(amount);
-};
-
 const formatPercent = (val) => `${(val * 100).toFixed(1)}%`;
-
 const formatDate = (dateValue) => {
   if (!dateValue) return "";
   const date = new Date(dateValue);
@@ -124,15 +207,13 @@ const formatDate = (dateValue) => {
     minute: "2-digit",
   });
 };
-
-const withTimeout = (promise, ms = 10000) => {
-  return Promise.race([
+const withTimeout = (promise, ms = 10000) =>
+  Promise.race([
     promise,
     new Promise((_, reject) =>
       setTimeout(() => reject(new Error("連線逾時")), ms)
     ),
   ]);
-};
 
 const callGemini = async (prompt, systemContext) => {
   if (!GEMINI_API_KEY) return "錯誤：找不到金鑰。請檢查 Vercel 環境變數設定。";
@@ -172,16 +253,6 @@ const callGemini = async (prompt, systemContext) => {
   }
 };
 
-const AVATARS = {
-  baby: <Baby size={32} />,
-  cat: <Cat size={32} />,
-  dog: <Dog size={32} />,
-  rabbit: <Rabbit size={32} />,
-  fish: <Fish size={32} />,
-  bird: <Bird size={32} />,
-  smile: <Smile size={32} />,
-};
-
 // --- Components ---
 
 const FormattedText = ({ text }) => {
@@ -204,107 +275,133 @@ const FormattedText = ({ text }) => {
   });
 };
 
-const DeleteConfirmModal = ({ target, onClose, onConfirm }) => {
-  return (
-    <div className="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center p-4 animate-in zoom-in-95">
-      <div className="bg-white w-full max-w-xs rounded-3xl p-6 shadow-2xl text-center">
-        <div className="bg-red-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <AlertTriangle size={32} className="text-red-500" />
-        </div>
-        <h3 className="text-xl font-bold text-slate-800 mb-2">
-          確定要刪除嗎？
-        </h3>
-        <p className="text-sm text-slate-500 mb-6">
-          將會永久刪除{" "}
-          <span className="font-bold text-red-500">{target?.name}</span>{" "}
-          的所有資料，無法復原。
-        </p>
-        <div className="flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold"
-          >
-            取消
-          </button>
-          <button
-            onClick={() => onConfirm(target.id)}
-            className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold shadow-lg"
-          >
-            確認刪除
-          </button>
-        </div>
+const DeleteConfirmModal = ({ target, onClose, onConfirm }) => (
+  <div className="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center p-4 animate-in zoom-in-95">
+    <div className="bg-white w-full max-w-xs rounded-3xl p-6 shadow-2xl text-center">
+      <div className="bg-red-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+        <AlertTriangle size={32} className="text-red-500" />
+      </div>
+      <h3 className="text-xl font-bold text-slate-800 mb-2">確定要刪除嗎？</h3>
+      <p className="text-sm text-slate-500 mb-6">
+        將會永久刪除{" "}
+        <span className="font-bold text-red-500">{target?.name}</span>{" "}
+        的資料，無法復原。
+      </p>
+      <div className="flex gap-3">
+        <button
+          onClick={onClose}
+          className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold"
+        >
+          取消
+        </button>
+        <button
+          onClick={() => onConfirm(target.id)}
+          className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold shadow-lg"
+        >
+          確認刪除
+        </button>
       </div>
     </div>
-  );
-};
+  </div>
+);
 
-const SavingsChart = ({ transactions }) => {
+// Enhanced Chart with Smooth Curves and Gradients (Fixed NaN Error)
+const SavingsChart = ({ transactions, theme }) => {
   const data = useMemo(() => {
     if (!transactions || transactions.length === 0) return [];
+
+    // Sort transactions
     const sortedTxs = [...transactions].sort(
-      (a, b) => a.timestamp - b.timestamp
+      (a, b) => (a.timestamp || 0) - (b.timestamp || 0)
     );
     let currentBal = 0;
     const points = [];
+
     sortedTxs.forEach((t) => {
-      const val = parseFloat(t.amount);
+      const val = parseFloat(t.amount) || 0; // Fix: Handle NaN amount
       if (t.type === "income" || t.type === "interest") currentBal += val;
       else currentBal -= val;
-      points.push({ date: t.timestamp, value: Math.max(0, currentBal) });
+      // Fix: Handle invalid timestamp by defaulting to Date.now(), though in logic it should be sorted
+      const ts = t.timestamp || Date.now();
+      points.push({ date: ts, value: Math.max(0, currentBal) });
     });
-    return points.slice(-20);
+
+    // Safety filter
+    const validPoints = points.filter((p) => !isNaN(p.value) && !isNaN(p.date));
+    return validPoints.slice(-30);
   }, [transactions]);
 
   if (data.length < 2) return null;
-  const width = 300,
-    height = 100,
-    padding = 5;
-  const maxVal = Math.max(...data.map((d) => d.value)) * 1.1;
-  const minVal = 0;
-  const minTime = data[0].date,
-    maxTime = data[data.length - 1].date;
-  const getX = (time) =>
-    ((time - minTime) / (maxTime - minTime || 1)) * (width - padding * 2) +
-    padding;
-  const getY = (val) =>
-    height -
-    ((val - minVal) / (maxVal - minVal || 1)) * (height - padding * 2) -
-    padding;
-  let pathD = `M ${getX(data[0].date)} ${getY(data[0].value)}`;
-  data.forEach((d) => {
-    pathD += ` L ${getX(d.date)} ${getY(d.value)}`;
-  });
-  const areaD = `${pathD} L ${getX(
-    data[data.length - 1].date
-  )} ${height} L ${getX(data[0].date)} ${height} Z`;
+
+  const width = 400;
+  const height = 150;
+  const padding = 10;
+
+  // Safe maxVal to prevent divide by zero
+  const maxVal = Math.max(...data.map((d) => d.value)) * 1.2 || 100;
+  const minTime = data[0].date;
+  const maxTime = data[data.length - 1].date;
+  const timeRange = maxTime - minTime || 1; // Prevent divide by zero
+
+  const getX = (time) => {
+    const res =
+      ((time - minTime) / timeRange) * (width - padding * 2) + padding;
+    return isNaN(res) ? padding : res;
+  };
+
+  const getY = (val) => {
+    const res = height - (val / maxVal) * (height - padding * 2) - padding;
+    return isNaN(res) ? height - padding : res;
+  };
+
+  // Generate Smooth Path
+  let d = `M ${getX(data[0].date)} ${getY(data[0].value)}`;
+  for (let i = 0; i < data.length - 1; i++) {
+    const x_mid = (getX(data[i].date) + getX(data[i + 1].date)) / 2;
+    const y_mid = (getY(data[i].value) + getY(data[i + 1].value)) / 2;
+    const cp_x1 = (x_mid + getX(data[i].date)) / 2;
+    const cp_x2 = (x_mid + getX(data[i + 1].date)) / 2;
+    d += ` Q ${cp_x1} ${getY(data[i].value)}, ${x_mid} ${y_mid} T ${getX(
+      data[i + 1].date
+    )} ${getY(data[i + 1].value)}`;
+  }
+
+  const areaD = `${d} L ${getX(data[data.length - 1].date)} ${height} L ${getX(
+    data[0].date
+  )} ${height} Z`;
+  const chartColor = THEMES[theme]?.chart || "#2563eb";
 
   return (
-    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 mb-4">
-      <h3 className="font-bold text-slate-700 mb-2 flex items-center gap-2 text-sm">
-        <TrendingUp size={16} className="text-emerald-500" /> 財富成長曲線
+    <div
+      className={`${THEMES[theme]?.card} p-4 rounded-2xl shadow-sm border border-slate-100 mb-4 overflow-hidden relative`}
+    >
+      <h3 className="font-bold mb-2 flex items-center gap-2 text-sm z-10 relative opacity-80">
+        <TrendingUp size={16} /> 財富成長曲線
       </h3>
-      <div className="w-full overflow-hidden">
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-24">
+      <div className="w-full">
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-32">
           <defs>
             <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#10b981" stopOpacity="0.2" />
-              <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
+              <stop offset="0%" stopColor={chartColor} stopOpacity="0.4" />
+              <stop offset="100%" stopColor={chartColor} stopOpacity="0" />
             </linearGradient>
           </defs>
           <path d={areaD} fill="url(#chartGradient)" stroke="none" />
           <path
-            d={pathD}
+            d={d}
             fill="none"
-            stroke="#10b981"
-            strokeWidth="2"
+            stroke={chartColor}
+            strokeWidth="3"
             strokeLinecap="round"
             strokeLinejoin="round"
           />
           <circle
             cx={getX(data[data.length - 1].date)}
             cy={getY(data[data.length - 1].value)}
-            r="3"
-            fill="#10b981"
+            r="4"
+            fill={chartColor}
+            stroke="white"
+            strokeWidth="2"
           />
         </svg>
       </div>
@@ -312,72 +409,162 @@ const SavingsChart = ({ transactions }) => {
   );
 };
 
-const ChangePinModal = ({ onClose, onUpdate, currentPin }) => {
-  const [oldPin, setOldPin] = useState("");
-  const [newPin, setNewPin] = useState("");
-  const [confirmPin, setConfirmPin] = useState("");
+// Achievement Stickers
+const StickerGallery = ({ transactions, balance, theme }) => {
+  const unlocked = useMemo(() => {
+    return ACHIEVEMENTS.filter((a) => a.condition(balance, transactions)).map(
+      (a) => a.id
+    );
+  }, [balance, transactions]);
+
   return (
-    <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-xs rounded-3xl p-6 shadow-2xl animate-in zoom-in-95">
-        <h3 className="text-xl font-bold mb-4 text-slate-800 text-center">
-          修改家長密碼
-        </h3>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (oldPin !== currentPin) return alert("舊密碼不正確");
-            if (newPin.length !== 4) return alert("須為4位數字");
-            if (newPin !== confirmPin) return alert("密碼不一致");
-            onUpdate(newPin);
-          }}
-          className="space-y-4"
-        >
-          <input
-            type="password"
-            maxLength="4"
-            className="w-full bg-slate-100 p-3 rounded-xl text-center font-bold outline-none"
-            value={oldPin}
-            onChange={(e) => setOldPin(e.target.value.replace(/\D/g, ""))}
-            placeholder="舊密碼"
-          />
-          <input
-            type="password"
-            maxLength="4"
-            className="w-full bg-slate-100 p-3 rounded-xl text-center font-bold outline-none"
-            value={newPin}
-            onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
-            placeholder="新密碼"
-          />
-          <input
-            type="password"
-            maxLength="4"
-            className="w-full bg-slate-100 p-3 rounded-xl text-center font-bold outline-none"
-            value={confirmPin}
-            onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ""))}
-            placeholder="確認新密碼"
-          />
-          <div className="flex gap-2 mt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-2 text-slate-500 font-bold"
+    <div
+      className={`${THEMES[theme]?.card} p-4 rounded-2xl shadow-sm border border-slate-100 mb-4`}
+    >
+      <h3 className="font-bold mb-3 flex items-center gap-2 text-sm opacity-80">
+        <Award size={16} /> 成就貼紙館
+      </h3>
+      <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide">
+        {ACHIEVEMENTS.map((ach) => {
+          const isUnlocked = unlocked.includes(ach.id);
+          return (
+            <div
+              key={ach.id}
+              className={`flex-shrink-0 flex flex-col items-center w-20 ${
+                isUnlocked ? "opacity-100" : "opacity-40 grayscale"
+              }`}
             >
-              取消
-            </button>
-            <button
-              type="submit"
-              className="flex-1 py-2 bg-blue-600 text-white rounded-xl font-bold"
-            >
-              儲存
-            </button>
-          </div>
-        </form>
+              <div
+                className={`w-14 h-14 rounded-full flex items-center justify-center mb-1 text-2xl shadow-sm ${
+                  isUnlocked
+                    ? "bg-yellow-100 text-yellow-600"
+                    : "bg-slate-100 text-slate-400"
+                }`}
+              >
+                {ach.icon}
+              </div>
+              <span className="text-[10px] font-bold text-center leading-tight">
+                {ach.name}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 };
 
+const ThemeSelector = ({ current, onChange }) => (
+  <div className="flex gap-2 mt-4 overflow-x-auto pb-2">
+    {Object.entries(THEMES).map(([key, t]) => (
+      <button
+        key={key}
+        onClick={() => onChange(key)}
+        className={`flex-shrink-0 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border-2 transition-all ${
+          current === key
+            ? "border-blue-500 bg-white shadow-md"
+            : "border-transparent bg-white/50 opacity-70"
+        }`}
+      >
+        <div
+          className={`w-4 h-4 rounded-full bg-gradient-to-br ${t.gradient}`}
+        ></div>
+        {t.name}
+      </button>
+    ))}
+  </div>
+);
+
+const TransactionEditor = ({ tx, onClose, onSave, onDelete }) => {
+  const [amount, setAmount] = useState(tx.amount);
+  const [note, setNote] = useState(tx.note);
+  const [isConfirming, setIsConfirming] = useState(false); // v23 Fix: Internal confirmation
+
+  // v23 Fix: Show internal delete confirm to avoid window.confirm blocking
+  if (isConfirming) {
+    return (
+      <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+        <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl text-center animate-in zoom-in-95">
+          <div className="bg-red-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Trash2 size={32} className="text-red-500" />
+          </div>
+          <h3 className="text-xl font-bold text-slate-800 mb-2">
+            刪除這筆紀錄？
+          </h3>
+          <p className="text-sm text-slate-500 mb-6">
+            金額: {tx.amount}, 備註: {tx.note}
+          </p>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setIsConfirming(false)}
+              className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold"
+            >
+              返回
+            </button>
+            <button
+              onClick={() => onDelete(tx.id)}
+              className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold shadow-lg"
+            >
+              確認刪除
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl animate-in zoom-in-95">
+        <h3 className="text-xl font-bold mb-4">編輯交易</h3>
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs font-bold text-slate-500">金額</label>
+            <input
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="w-full p-3 bg-slate-100 rounded-xl font-bold"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-slate-500">備註</label>
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="w-full p-3 bg-slate-100 rounded-xl"
+            />
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="flex-1 py-3 text-slate-500 font-bold"
+            >
+              取消
+            </button>
+            <button
+              onClick={() => setIsConfirming(true)}
+              className="flex-1 py-3 bg-red-100 text-red-500 rounded-xl font-bold flex items-center justify-center gap-2"
+            >
+              <Trash2 size={16} /> 刪除
+            </button>
+            <button
+              onClick={() => onSave(tx.id, parseFloat(amount), note)}
+              className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold flex items-center justify-center gap-2"
+            >
+              <Save size={16} /> 儲存
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Reused Components (SmartPiggyAI, PinPad, etc. - Minimal changes for theme prop)
 const SmartPiggyAI = ({ userRole, userName, balance, rates, onClose }) => {
+  // ... (Same as v21, omitted for brevity, logic unchanged)
   const [messages, setMessages] = useState([
     {
       role: "ai",
@@ -542,6 +729,71 @@ const PinPad = ({ onSuccess, onCancel, targetPin, title, subTitle }) => {
   );
 };
 
+const ChangePinModal = ({ onClose, onUpdate, currentPin }) => {
+  const [oldPin, setOldPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-xs rounded-3xl p-6 shadow-2xl animate-in zoom-in-95">
+        <h3 className="text-xl font-bold mb-4 text-slate-800 text-center">
+          修改家長密碼
+        </h3>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (oldPin !== currentPin) return alert("舊密碼不正確");
+            if (newPin.length !== 4) return alert("須為4位數字");
+            if (newPin !== confirmPin) return alert("密碼不一致");
+            onUpdate(newPin);
+          }}
+          className="space-y-4"
+        >
+          <input
+            type="password"
+            maxLength="4"
+            className="w-full bg-slate-100 p-3 rounded-xl text-center font-bold outline-none"
+            value={oldPin}
+            onChange={(e) => setOldPin(e.target.value.replace(/\D/g, ""))}
+            placeholder="舊密碼"
+          />
+          <input
+            type="password"
+            maxLength="4"
+            className="w-full bg-slate-100 p-3 rounded-xl text-center font-bold outline-none"
+            value={newPin}
+            onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
+            placeholder="新密碼"
+          />
+          <input
+            type="password"
+            maxLength="4"
+            className="w-full bg-slate-100 p-3 rounded-xl text-center font-bold outline-none"
+            value={confirmPin}
+            onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ""))}
+            placeholder="確認新密碼"
+          />
+          <div className="flex gap-2 mt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-2 text-slate-500 font-bold"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              className="flex-1 py-2 bg-blue-600 text-white rounded-xl font-bold"
+            >
+              儲存
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 const MemberFormModal = ({
   onClose,
   onSubmit,
@@ -616,17 +868,23 @@ const MemberFormModal = ({
   );
 };
 
-const CentralBankControl = ({ rates, onUpdateRates, onToggleAuto }) => {
+const CentralBankControl = ({
+  rates,
+  onUpdateRates,
+  onToggleAuto,
+  theme,
+  onThemeChange,
+}) => {
   const [isOpen, setIsOpen] = useState(false);
   const [inflation, setInflation] = useState(rates.inflation * 100);
   const [bonus, setBonus] = useState(rates.bonus * 100);
+  const t = THEMES[theme] || THEMES.ocean;
+
   return (
     <div className="mb-4">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`w-full text-white p-4 rounded-2xl flex items-center justify-between shadow-lg ${
-          rates.isAuto ? "bg-indigo-600" : "bg-slate-800"
-        }`}
+        className={`w-full text-white p-4 rounded-2xl flex items-center justify-between shadow-lg bg-gradient-to-r ${t.gradient}`}
       >
         <div className="flex items-center gap-3">
           {rates.isAuto ? <Globe className="animate-pulse" /> : <Settings />}
@@ -648,9 +906,16 @@ const CentralBankControl = ({ rates, onUpdateRates, onToggleAuto }) => {
       </button>
       {isOpen && (
         <div className="mt-2 bg-white p-4 rounded-2xl shadow-xl space-y-4">
+          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+            外觀主題
+          </div>
+          <ThemeSelector current={theme} onChange={onThemeChange} />
+
+          <div className="border-t border-slate-100 my-4"></div>
+
           <div className="flex justify-between items-center bg-slate-50 p-3 rounded-xl">
             <span className="font-bold text-slate-700 flex items-center gap-2">
-              <Zap size={18} /> 自動調節
+              <Zap size={18} /> 自動調節通膨
             </span>
             <button
               onClick={() => onToggleAuto(!rates.isAuto)}
@@ -727,7 +992,7 @@ const LoginScreen = ({ onLogin, onGuestLogin }) => (
       <div className="bg-blue-600 w-24 h-24 rounded-full flex items-center justify-center mx-auto shadow-lg">
         <PiggyBank size={48} className="text-white" />
       </div>
-      <h1 className="text-3xl font-bold text-slate-800">家庭銀行 v21.0</h1>
+      <h1 className="text-3xl font-bold text-slate-800">家庭銀行 v23.0</h1>
       <p className="text-slate-500 mb-8">建立您專屬的虛擬家庭銀行</p>
       <button
         onClick={onLogin}
@@ -754,7 +1019,7 @@ export default function FamilyBankApp() {
   const [googleUser, setGoogleUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [role, setRole] = useState(null);
-  const [selectedAccountId, setSelectedAccountId] = useState(null); // Refactored to ID
+  const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [pinPadConfig, setPinPadConfig] = useState(null);
   const [showAiChat, setShowAiChat] = useState(false);
   const [showChangePin, setShowChangePin] = useState(false);
@@ -763,15 +1028,17 @@ export default function FamilyBankApp() {
   const [balance, setBalance] = useState(0);
   const [rates, setRates] = useState({
     inflation: 0.03,
-    bonus: 0.05,
+    bonus: 0,
     isAuto: true,
     news: "市場觀察中...",
     lastUpdate: 0,
-  });
+  }); // Default bonus 0
   const [parentPin, setParentPin] = useState("8888");
+  const [appTheme, setAppTheme] = useState("ocean"); // Default Theme
 
   const [modalConfig, setModalConfig] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [editingTx, setEditingTx] = useState(null); // Transaction Edit State
   const [isTxModalOpen, setIsTxModalOpen] = useState(false);
   const [transType, setTransType] = useState("expense");
   const [amount, setAmount] = useState("");
@@ -780,11 +1047,11 @@ export default function FamilyBankApp() {
 
   const [txFilter, setTxFilter] = useState("all");
 
-  // Derived Account
   const selectedAccount = useMemo(
     () => accounts.find((a) => a.id === selectedAccountId),
     [accounts, selectedAccountId]
   );
+  const currentThemeData = THEMES[appTheme] || THEMES.ocean;
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
@@ -823,13 +1090,11 @@ export default function FamilyBankApp() {
         const needsUpdate =
           Date.now() - (d.lastUpdate || 0) > 86400000 ||
           d.news === "市場觀察中...";
-        if (d.isAuto && needsUpdate) {
-          updateMarketConditions(d.inflation);
-        }
+        if (d.isAuto && needsUpdate) updateMarketConditions(d.inflation);
       } else
         setDoc(ratesRef, {
           inflation: 0.025,
-          bonus: 0.05,
+          bonus: 0,
           isAuto: true,
           news: "市場觀察中...",
           lastUpdate: 0,
@@ -847,10 +1112,17 @@ export default function FamilyBankApp() {
       ),
       (s) => setParentPin(s.exists() ? s.data().pin : "8888")
     );
+    const unsubUi = onSnapshot(
+      doc(db, "artifacts", appId, "users", googleUser.uid, "settings", "ui"),
+      (s) => {
+        if (s.exists()) setAppTheme(s.data().theme || "ocean");
+      }
+    );
     return () => {
       unsubAcc();
       unsubRates();
       unsubSec();
+      unsubUi();
     };
   }, [googleUser]);
 
@@ -885,7 +1157,6 @@ export default function FamilyBankApp() {
     );
   };
 
-  // FIX 1: Transaction Listener (UI Sync)
   useEffect(() => {
     if (!googleUser || !selectedAccountId) {
       setTransactions([]);
@@ -910,7 +1181,6 @@ export default function FamilyBankApp() {
     );
   }, [googleUser, selectedAccountId]);
 
-  // FIX 2: Separate Balance Calculation
   useEffect(() => {
     const bal = transactions.reduce(
       (acc, t) =>
@@ -922,23 +1192,15 @@ export default function FamilyBankApp() {
     setBalance(bal);
   }, [transactions]);
 
-  // FIX 3: Robust Interest Check
   useEffect(() => {
     if (!selectedAccount || !googleUser || !selectedAccount.lastInterestDate)
       return;
-
-    // We can't rely on 'balance' from state here because it might be 0 initially.
-    // However, interest logic is daily, so one render cycle delay is fine.
-
     const checkInterest = async () => {
       const last = selectedAccount.lastInterestDate;
       const now = Date.now();
       const days = Math.floor((now - last) / 86400000);
       const rate = rates.inflation + rates.bonus;
-
       if (days >= 1) {
-        // Double check balance here if we want to be super safe, but using state balance is okay for now
-        // as long as we update the date FIRST to prevent loops
         const memRef = doc(
           db,
           "artifacts",
@@ -948,10 +1210,7 @@ export default function FamilyBankApp() {
           "members",
           selectedAccount.id
         );
-
-        // Optimistic Locking: Set date immediately
         await updateDoc(memRef, { lastInterestDate: now });
-
         if (balance > 0) {
           const dailyRate = rate / 365;
           const earned = Math.floor(
@@ -981,7 +1240,7 @@ export default function FamilyBankApp() {
       }
     };
     checkInterest();
-  }, [selectedAccount, rates, googleUser, balance]); // Balance included but date check prevents loop
+  }, [selectedAccount, rates, googleUser, balance]);
 
   const handleGoogleLogin = async () => {
     try {
@@ -1086,17 +1345,55 @@ export default function FamilyBankApp() {
             "members",
             modalConfig.data.id
           ),
-          {
-            name,
-            icon,
-            pin,
-          }
+          { name, icon, pin }
         );
       }
       setModalConfig(null);
     } catch (e) {
       console.error(e);
       alert("操作失敗");
+    }
+  };
+
+  const handleThemeChange = async (newTheme) => {
+    setAppTheme(newTheme);
+    if (googleUser)
+      await setDoc(
+        doc(db, "artifacts", appId, "users", googleUser.uid, "settings", "ui"),
+        { theme: newTheme },
+        { merge: true }
+      );
+  };
+
+  // v23 Fix: Remove window.confirm for delete transaction
+  const handleEditTx = async (id, newAmount, newNote) => {
+    try {
+      await updateDoc(
+        doc(
+          db,
+          "artifacts",
+          appId,
+          "users",
+          googleUser.uid,
+          "transactions",
+          id
+        ),
+        { amount: newAmount, note: newNote }
+      );
+      setEditingTx(null);
+    } catch (e) {
+      alert("更新失敗");
+    }
+  };
+  const handleDeleteTx = async (id) => {
+    // window.confirm removed, handled by UI modal
+    try {
+      await deleteDoc(
+        doc(db, "artifacts", appId, "users", googleUser.uid, "transactions", id)
+      );
+      setEditingTx(null);
+    } catch (e) {
+      alert("刪除失敗");
     }
   };
 
@@ -1116,17 +1413,21 @@ export default function FamilyBankApp() {
 
   if (!role && !selectedAccount) {
     return (
-      <div className="min-h-screen bg-slate-100 pb-10">
+      <div
+        className={`min-h-screen pb-10 ${currentThemeData.bg} flex flex-col`}
+      >
         <NewsTicker news={rates.news} />
-        <div className="flex items-center justify-center p-4 min-h-[80vh]">
+        <div className="flex-1 flex items-center justify-center p-4">
           <div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-md text-center space-y-6">
             <div className="flex justify-end">
               <button onClick={() => signOut(auth)}>
                 <LogOut size={20} className="text-slate-300" />
               </button>
             </div>
-            <div className="bg-slate-800 w-20 h-20 rounded-full flex items-center justify-center mx-auto">
-              <TrendingUp size={40} className="text-emerald-400" />
+            <div
+              className={`w-24 h-24 rounded-full flex items-center justify-center mx-auto shadow-lg text-white ${currentThemeData.header}`}
+            >
+              <PiggyBank size={48} />
             </div>
             <h1 className="text-2xl font-bold">家庭銀行</h1>
             <p className="text-sm text-slate-500">
@@ -1147,7 +1448,7 @@ export default function FamilyBankApp() {
                   },
                 })
               }
-              className="w-full p-4 bg-slate-800 text-white rounded-2xl font-bold flex justify-center gap-2"
+              className={`w-full p-4 text-white rounded-2xl font-bold flex justify-center gap-2 ${currentThemeData.header}`}
             >
               <ShieldCheck /> 家長管理
             </button>
@@ -1169,9 +1470,11 @@ export default function FamilyBankApp() {
                         },
                       });
                   }}
-                  className="bg-white border-2 p-4 rounded-2xl hover:border-blue-300 flex flex-col items-center"
+                  className={`bg-white border-2 p-4 rounded-2xl hover:border-blue-300 flex flex-col items-center`}
                 >
-                  <div className="bg-blue-100 text-blue-600 p-2 rounded-full mb-2">
+                  <div
+                    className={`p-2 rounded-full mb-2 bg-slate-100 ${currentThemeData.accent}`}
+                  >
                     {AVATARS[acc.icon] || <User />}
                   </div>
                   <span className="font-bold">{acc.name}</span>
@@ -1185,6 +1488,14 @@ export default function FamilyBankApp() {
             </div>
           </div>
         </div>
+
+        {/* v23 Footer */}
+        <div className="py-6 text-center">
+          <p className="text-xs text-slate-400 font-medium opacity-60">
+            王維與 Gemini 合作開發
+          </p>
+        </div>
+
         {pinPadConfig && (
           <PinPad {...pinPadConfig} onCancel={() => setPinPadConfig(null)} />
         )}
@@ -1194,7 +1505,7 @@ export default function FamilyBankApp() {
 
   if (role === "parent" && !selectedAccount) {
     return (
-      <div className="min-h-screen bg-slate-50 p-6">
+      <div className={`min-h-screen p-6 ${currentThemeData.bg}`}>
         <header className="flex justify-between mb-6">
           <h1 className="text-2xl font-bold flex gap-2 items-center">
             <ShieldCheck /> 總裁控制台
@@ -1244,6 +1555,8 @@ export default function FamilyBankApp() {
               { isAuto: auto }
             )
           }
+          theme={appTheme}
+          onThemeChange={handleThemeChange}
         />
         <div className="grid grid-cols-2 gap-4 mt-8">
           {accounts.map((acc) => (
@@ -1275,7 +1588,9 @@ export default function FamilyBankApp() {
                 onClick={() => setSelectedAccountId(acc.id)}
                 className="flex flex-col items-center w-full mt-2"
               >
-                <div className="p-4 rounded-full mb-3 bg-blue-100 text-blue-600">
+                <div
+                  className={`p-4 rounded-full mb-3 bg-slate-100 ${currentThemeData.accent}`}
+                >
                   {AVATARS[acc.icon] || <User />}
                 </div>
                 <span className="font-bold">{acc.name}</span>
@@ -1335,16 +1650,10 @@ export default function FamilyBankApp() {
   const monthlyInterestProj = Math.floor((balance * totalRate) / 12);
 
   return (
-    <div
-      className={`min-h-screen pb-20 font-sans ${
-        isParentView ? "bg-slate-50" : "bg-sky-50"
-      }`}
-    >
+    <div className={`min-h-screen pb-20 font-sans ${currentThemeData.bg}`}>
       <NewsTicker news={rates.news} />
       <header
-        className={`p-6 rounded-b-3xl shadow-lg text-white ${
-          isParentView ? "bg-slate-800" : "bg-blue-500"
-        }`}
+        className={`p-6 rounded-b-3xl shadow-lg text-white transition-colors duration-500 ${currentThemeData.header}`}
       >
         <div className="flex justify-between mb-4">
           <button
@@ -1373,10 +1682,18 @@ export default function FamilyBankApp() {
         </div>
       </header>
       <main className="p-5 space-y-4 max-w-lg mx-auto">
-        <SavingsChart transactions={transactions} />
+        <SavingsChart transactions={transactions} theme={appTheme} />
+        {!isParentView && (
+          <StickerGallery
+            transactions={transactions}
+            balance={balance}
+            theme={appTheme}
+          />
+        )}
+
         <button
           onClick={() => setShowAiChat(true)}
-          className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-4 rounded-2xl flex items-center justify-between shadow-lg"
+          className={`w-full text-white p-4 rounded-2xl flex items-center justify-between shadow-lg bg-gradient-to-r ${currentThemeData.gradient}`}
         >
           <div className="flex items-center gap-3">
             <Sparkles className="text-yellow-300" />{" "}
@@ -1388,7 +1705,9 @@ export default function FamilyBankApp() {
           <MessageCircle />
         </button>
         {isParentView ? (
-          <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+          <div
+            className={`${currentThemeData.card} p-4 rounded-2xl shadow-sm border border-slate-200`}
+          >
             <h3 className="text-slate-500 text-sm font-bold mb-3 uppercase tracking-wider">
               資金管理
             </h3>
@@ -1415,19 +1734,25 @@ export default function FamilyBankApp() {
           </div>
         ) : (
           <>
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-blue-100 flex items-center justify-between">
+            <div
+              className={`${currentThemeData.card} p-4 rounded-2xl shadow-sm border border-blue-100 flex items-center justify-between`}
+            >
               <div>
-                <div className="text-xs text-slate-400 font-bold uppercase mb-1">
+                <div className="text-xs opacity-60 font-bold uppercase mb-1">
                   下個月預計利息
                 </div>
-                <div className="text-2xl font-bold text-emerald-500">
+                <div
+                  className={`text-2xl font-bold ${currentThemeData.accent}`}
+                >
                   +{formatCurrency(monthlyInterestProj)}
                 </div>
-                <div className="text-xs text-slate-400 mt-1">
+                <div className="text-xs opacity-50 mt-1">
                   年利率 {formatPercent(totalRate)}
                 </div>
               </div>
-              <div className="bg-emerald-100 p-3 rounded-full text-emerald-600">
+              <div
+                className={`p-3 rounded-full bg-slate-100 ${currentThemeData.accent}`}
+              >
                 <TrendingUp size={24} />
               </div>
             </div>
@@ -1443,13 +1768,14 @@ export default function FamilyBankApp() {
           </>
         )}
 
-        {/* NEW: Transaction Filter & List */}
-        <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-          <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
-            <div className="flex gap-2 font-bold text-slate-700">
+        <div
+          className={`${currentThemeData.card} rounded-2xl shadow-sm border overflow-hidden`}
+        >
+          <div className="p-4 border-b border-slate-100 flex justify-between items-center">
+            <div className="flex gap-2 font-bold opacity-80">
               <History /> 交易紀錄
             </div>
-            <div className="flex bg-slate-200 p-1 rounded-lg">
+            <div className="flex bg-slate-100 p-1 rounded-lg">
               {["all", "income", "expense", "interest"].map((type) => (
                 <button
                   key={type}
@@ -1457,7 +1783,7 @@ export default function FamilyBankApp() {
                   className={`px-3 py-1 rounded-md text-xs font-bold transition-colors ${
                     txFilter === type
                       ? "bg-white shadow-sm text-slate-800"
-                      : "text-slate-500 hover:text-slate-700"
+                      : "text-slate-400 hover:text-slate-600"
                   }`}
                 >
                   {type === "all"
@@ -1471,7 +1797,7 @@ export default function FamilyBankApp() {
               ))}
             </div>
           </div>
-          <div className="divide-y max-h-[300px] overflow-y-auto">
+          <div className="divide-y divide-slate-50 max-h-[300px] overflow-y-auto">
             {transactions.filter((t) =>
               txFilter === "all" ? true : t.type === txFilter
             ).length === 0 ? (
@@ -1484,7 +1810,7 @@ export default function FamilyBankApp() {
                 .map((t) => (
                   <div
                     key={t.id}
-                    className="p-4 flex justify-between items-center"
+                    className="p-4 flex justify-between items-center group"
                   >
                     <div className="flex gap-3 items-center">
                       <div
@@ -1505,7 +1831,17 @@ export default function FamilyBankApp() {
                         )}
                       </div>
                       <div>
-                        <div className="font-bold text-sm">{t.note}</div>
+                        <div className="font-bold text-sm flex items-center gap-2">
+                          {t.note}{" "}
+                          {isParentView && (
+                            <button
+                              onClick={() => setEditingTx(t)}
+                              className="text-slate-300 hover:text-blue-500"
+                            >
+                              <Edit size={12} />
+                            </button>
+                          )}
+                        </div>
                         <div className="text-xs text-slate-400">
                           {formatDate(t.timestamp)}
                         </div>
@@ -1587,6 +1923,14 @@ export default function FamilyBankApp() {
           target={deleteTarget}
           onClose={() => setDeleteTarget(null)}
           onConfirm={confirmDeleteMember}
+        />
+      )}
+      {editingTx && (
+        <TransactionEditor
+          tx={editingTx}
+          onClose={() => setEditingTx(null)}
+          onSave={handleEditTx}
+          onDelete={handleDeleteTx}
         />
       )}
     </div>
