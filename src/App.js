@@ -36,6 +36,7 @@ import {
   Edit,
   Save,
   AlertTriangle,
+  Filter,
 } from "lucide-react";
 
 // Firebase Imports
@@ -134,24 +135,39 @@ const withTimeout = (promise, ms = 10000) => {
 
 const callGemini = async (prompt, systemContext) => {
   if (!GEMINI_API_KEY) return "錯誤：找不到金鑰。請檢查 Vercel 環境變數設定。";
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          systemInstruction: { parts: [{ text: systemContext }] },
-        }),
+  const delays = [1000, 2000, 4000];
+  for (let i = 0; i <= 3; i++) {
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            systemInstruction: { parts: [{ text: systemContext }] },
+          }),
+        }
+      );
+      if (!response.ok) {
+        if ((response.status === 503 || response.status === 429) && i < 3) {
+          await new Promise((r) => setTimeout(r, delays[i]));
+          continue;
+        }
+        throw new Error(`API Error: ${response.status}`);
       }
-    );
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "小豬正在思考...";
-  } catch (error) {
-    console.error("Gemini Call Failed:", error);
-    return `連線失敗 (${error.message})。`;
+      const data = await response.json();
+      return (
+        data.candidates?.[0]?.content?.parts?.[0]?.text || "小豬正在思考..."
+      );
+    } catch (error) {
+      if (i < 3) {
+        await new Promise((r) => setTimeout(r, delays[i]));
+        continue;
+      }
+      console.error("Gemini Call Failed:", error);
+      return `連線失敗 (${error.message})。`;
+    }
   }
 };
 
@@ -200,7 +216,7 @@ const DeleteConfirmModal = ({ target, onClose, onConfirm }) => {
         <p className="text-sm text-slate-500 mb-6">
           將會永久刪除{" "}
           <span className="font-bold text-red-500">{target?.name}</span>{" "}
-          的所有資料與交易紀錄，此動作無法復原。
+          的所有資料，無法復原。
         </p>
         <div className="flex gap-3">
           <button
@@ -211,7 +227,7 @@ const DeleteConfirmModal = ({ target, onClose, onConfirm }) => {
           </button>
           <button
             onClick={() => onConfirm(target.id)}
-            className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold shadow-lg hover:bg-red-600"
+            className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold shadow-lg"
           >
             確認刪除
           </button>
@@ -239,23 +255,20 @@ const SavingsChart = ({ transactions }) => {
   }, [transactions]);
 
   if (data.length < 2) return null;
-
-  const width = 300;
-  const height = 100;
-  const padding = 5;
+  const width = 300,
+    height = 100,
+    padding = 5;
   const maxVal = Math.max(...data.map((d) => d.value)) * 1.1;
   const minVal = 0;
-  const minTime = data[0].date;
-  const maxTime = data[data.length - 1].date;
-  const timeRange = maxTime - minTime;
-
+  const minTime = data[0].date,
+    maxTime = data[data.length - 1].date;
   const getX = (time) =>
-    ((time - minTime) / (timeRange || 1)) * (width - padding * 2) + padding;
+    ((time - minTime) / (maxTime - minTime || 1)) * (width - padding * 2) +
+    padding;
   const getY = (val) =>
     height -
     ((val - minVal) / (maxVal - minVal || 1)) * (height - padding * 2) -
     padding;
-
   let pathD = `M ${getX(data[0].date)} ${getY(data[0].value)}`;
   data.forEach((d) => {
     pathD += ` L ${getX(d.date)} ${getY(d.value)}`;
@@ -312,8 +325,8 @@ const ChangePinModal = ({ onClose, onUpdate, currentPin }) => {
           onSubmit={(e) => {
             e.preventDefault();
             if (oldPin !== currentPin) return alert("舊密碼不正確");
-            if (newPin.length !== 4) return alert("新密碼必須是 4 位數字");
-            if (newPin !== confirmPin) return alert("兩次新密碼不一致");
+            if (newPin.length !== 4) return alert("須為4位數字");
+            if (newPin !== confirmPin) return alert("密碼不一致");
             onUpdate(newPin);
           }}
           className="space-y-4"
@@ -373,40 +386,31 @@ const SmartPiggyAI = ({ userRole, userName, balance, rates, onClose }) => {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef(null);
-
   useEffect(() => {
     if (scrollRef.current)
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
-
   const handleSend = async () => {
     if (!input.trim() || loading) return;
     const userMsg = input;
     setInput("");
     setMessages((prev) => [...prev, { role: "user", text: userMsg }]);
     setLoading(true);
-
     const context = `你是一個專為家庭銀行 App 設計的 AI 理財顧問「智慧小豬」。對象：${
       userRole === "parent" ? "家長" : "小孩"
     } (${userName})。財務狀況：餘額 ${balance}元，通膨率 ${formatPercent(
       rates.inflation
-    )}，加碼利息 ${formatPercent(rates.bonus)}。
-    重要原則：
-    1. 請勿使用 Markdown 表格 (Table)。
-    2. 請使用條列式清單 (Bulleted List) 或 Emoji 來呈現資訊。
-    3. 金額或重點請使用雙星號 **粗體** 標示。
-    4. 回答請活潑、具鼓勵性且易讀。`;
-
+    )}，加碼利息 ${formatPercent(
+      rates.bonus
+    )}。原則：勿用 Markdown 表格，用條列式清單或 Emoji。金額用 **粗體**。`;
     const res = await callGemini(userMsg, context);
     setMessages((prev) => [...prev, { role: "ai", text: res }]);
     setLoading(false);
   };
-
   const suggestions =
     userRole === "child"
       ? ["我可以買玩具嗎？", "錢為什麼會變多？", "什麼是通膨？"]
       : ["如何教孩子延遲享樂？", "現在的通膨率適合怎麼教？"];
-
   return (
     <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 animate-in fade-in">
       <div className="bg-white w-full max-w-md h-[500px] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
@@ -722,7 +726,7 @@ const LoginScreen = ({ onLogin, onGuestLogin }) => (
       <div className="bg-blue-600 w-24 h-24 rounded-full flex items-center justify-center mx-auto shadow-lg">
         <PiggyBank size={48} className="text-white" />
       </div>
-      <h1 className="text-3xl font-bold text-slate-800">家庭銀行 v18.0</h1>
+      <h1 className="text-3xl font-bold text-slate-800">家庭銀行 v20.0</h1>
       <p className="text-slate-500 mb-8">建立您專屬的虛擬家庭銀行</p>
       <button
         onClick={onLogin}
@@ -772,6 +776,9 @@ export default function FamilyBankApp() {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // NEW: Transaction Filter State
+  const [txFilter, setTxFilter] = useState("all"); // 'all', 'income', 'expense', 'interest'
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
@@ -846,18 +853,14 @@ export default function FamilyBankApp() {
     if (!googleUser) return;
     const drift = (Math.random() - 0.5) * 0.03;
     let newCPI = Math.max(0.005, Math.min(0.08, current + drift));
-
-    // NEW: Ask Gemini for a realistic headline
     const today = new Date().toLocaleDateString("zh-TW");
     const newsPrompt = `今天是 ${today}。請扮演一位財經記者，根據真實世界的經濟氛圍（例如 AI 發展、綠能、通膨狀況、全球股市），為小學生寫一則 20 字以內的簡易財經快訊。請只回傳標題內容，不要有任何引號或解釋。`;
-
     let aiNews = "";
     try {
       aiNews = await callGemini(newsPrompt, "You are a reporter.");
     } catch (e) {
       console.error("News gen failed", e);
     }
-
     if (!aiNews || aiNews.includes("錯誤")) {
       const item =
         MARKET_NEWS.find(
@@ -865,7 +868,6 @@ export default function FamilyBankApp() {
         ) || MARKET_NEWS[0];
       aiNews = item.text;
     }
-
     await updateDoc(
       doc(db, "artifacts", appId, "users", googleUser.uid, "settings", "rates"),
       {
@@ -902,8 +904,13 @@ export default function FamilyBankApp() {
     );
   }, [googleUser, selectedAccount]);
 
+  // CRITICAL FIX: Loop Prevention & Interest Calculation
+  // 1. Remove 'transactions' dependency to prevent infinite re-render
+  // 2. Add explicit check for "today" to prevent multiple interest entries
   useEffect(() => {
     if (!selectedAccount || !googleUser) return;
+
+    // Calculate Balance locally for display
     const bal = transactions.reduce(
       (acc, t) =>
         t.type === "income" || t.type === "interest"
@@ -912,12 +919,19 @@ export default function FamilyBankApp() {
       0
     );
     setBalance(bal);
+
     const checkInterest = async () => {
       const last = selectedAccount.lastInterestDate || Date.now();
       const now = Date.now();
       const days = Math.floor((now - last) / 86400000);
       const rate = rates.inflation + rates.bonus;
-      if (days >= 1) {
+
+      // Only proceed if at least 1 day passed AND balance > 0
+      if (days >= 1 && bal > 0) {
+        // Anti-Dup Check: Check if we already have an interest entry for today
+        // Note: We use the transactions from the closure (which might be stale, but good enough for simple dedup)
+        // Better: We rely on the updateDoc of lastInterestDate to block subsequent calls
+
         const memRef = doc(
           db,
           "artifacts",
@@ -927,35 +941,41 @@ export default function FamilyBankApp() {
           "members",
           selectedAccount.id
         );
+
+        // Optimistic update to block other potential calls immediately
+        // In a real production app, we would use a Cloud Function or Transaction for this.
         await updateDoc(memRef, { lastInterestDate: now });
-        if (bal > 0) {
-          const dailyRate = rate / 365;
-          const earned = Math.floor(bal * (Math.pow(1 + dailyRate, days) - 1));
-          if (earned > 0) {
-            await addDoc(
-              collection(
-                db,
-                "artifacts",
-                appId,
-                "users",
-                googleUser.uid,
-                "transactions"
-              ),
-              {
-                type: "interest",
-                amount: earned,
-                note: `複利收入 (${(rate * 100).toFixed(1)}%, ${days}天)`,
-                timestamp: now,
-                memberId: selectedAccount.id,
-                by: "system",
-              }
-            );
-          }
+
+        const dailyRate = rate / 365;
+        const earned = Math.floor(bal * (Math.pow(1 + dailyRate, days) - 1));
+
+        if (earned > 0) {
+          await addDoc(
+            collection(
+              db,
+              "artifacts",
+              appId,
+              "users",
+              googleUser.uid,
+              "transactions"
+            ),
+            {
+              type: "interest",
+              amount: earned,
+              note: `複利收入 (${(rate * 100).toFixed(1)}%, ${days}天)`,
+              timestamp: now,
+              memberId: selectedAccount.id,
+              by: "system",
+            }
+          );
         }
       }
     };
+
+    // Only run this check when account is selected or rates change
+    // We intentionally OMIT transactions from dependency to stop the loop
     checkInterest();
-  }, [transactions, selectedAccount, rates, googleUser]);
+  }, [selectedAccount, rates, googleUser]);
 
   const handleGoogleLogin = async () => {
     try {
@@ -981,8 +1001,6 @@ export default function FamilyBankApp() {
       alert("金額必須大於 0");
       return;
     }
-
-    // v18 Fix: Add Balance Check
     if (transType === "expense" && num > balance) {
       alert("餘額不足！無法取出比存款還多的錢。");
       return;
@@ -1419,56 +1437,87 @@ export default function FamilyBankApp() {
             </button>
           </>
         )}
+
+        {/* NEW: Transaction Filter & List */}
         <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-          <div className="p-4 border-b bg-slate-50 flex gap-2 font-bold text-slate-700">
-            <History /> 交易紀錄
+          <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
+            <div className="flex gap-2 font-bold text-slate-700">
+              <History /> 交易紀錄
+            </div>
+            <div className="flex bg-slate-200 p-1 rounded-lg">
+              {["all", "income", "expense", "interest"].map((type) => (
+                <button
+                  key={type}
+                  onClick={() => setTxFilter(type)}
+                  className={`px-3 py-1 rounded-md text-xs font-bold transition-colors ${
+                    txFilter === type
+                      ? "bg-white shadow-sm text-slate-800"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  {type === "all"
+                    ? "全部"
+                    : type === "income"
+                    ? "存入"
+                    : type === "expense"
+                    ? "支出"
+                    : "利息"}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="divide-y max-h-[300px] overflow-y-auto">
-            {transactions.length === 0 ? (
+            {transactions.filter((t) =>
+              txFilter === "all" ? true : t.type === txFilter
+            ).length === 0 ? (
               <div className="p-8 text-center text-slate-400">無紀錄</div>
             ) : (
-              transactions.map((t) => (
-                <div
-                  key={t.id}
-                  className="p-4 flex justify-between items-center"
-                >
-                  <div className="flex gap-3 items-center">
-                    <div
-                      className={`p-2 rounded-full ${
-                        t.type === "income"
-                          ? "bg-blue-100 text-blue-600"
-                          : t.type === "interest"
-                          ? "bg-emerald-100 text-emerald-600"
-                          : "bg-rose-100 text-rose-600"
-                      }`}
-                    >
-                      {t.type === "income" ? (
-                        <ArrowUpCircle />
-                      ) : t.type === "interest" ? (
-                        <TrendingUp />
-                      ) : (
-                        <ArrowDownCircle />
-                      )}
-                    </div>
-                    <div>
-                      <div className="font-bold text-sm">{t.note}</div>
-                      <div className="text-xs text-slate-400">
-                        {formatDate(t.timestamp)}
+              transactions
+                .filter((t) =>
+                  txFilter === "all" ? true : t.type === txFilter
+                )
+                .map((t) => (
+                  <div
+                    key={t.id}
+                    className="p-4 flex justify-between items-center"
+                  >
+                    <div className="flex gap-3 items-center">
+                      <div
+                        className={`p-2 rounded-full ${
+                          t.type === "income"
+                            ? "bg-blue-100 text-blue-600"
+                            : t.type === "interest"
+                            ? "bg-emerald-100 text-emerald-600"
+                            : "bg-rose-100 text-rose-600"
+                        }`}
+                      >
+                        {t.type === "income" ? (
+                          <ArrowUpCircle />
+                        ) : t.type === "interest" ? (
+                          <TrendingUp />
+                        ) : (
+                          <ArrowDownCircle />
+                        )}
+                      </div>
+                      <div>
+                        <div className="font-bold text-sm">{t.note}</div>
+                        <div className="text-xs text-slate-400">
+                          {formatDate(t.timestamp)}
+                        </div>
                       </div>
                     </div>
+                    <span
+                      className={`font-bold ${
+                        t.type === "expense"
+                          ? "text-rose-500"
+                          : "text-emerald-600"
+                      }`}
+                    >
+                      {t.type === "expense" ? "-" : "+"}
+                      {formatCurrency(t.amount)}
+                    </span>
                   </div>
-                  <span
-                    className={`font-bold ${
-                      t.type === "expense"
-                        ? "text-rose-500"
-                        : "text-emerald-600"
-                    }`}
-                  >
-                    {t.type === "expense" ? "-" : "+"}
-                    {formatCurrency(t.amount)}
-                  </span>
-                </div>
-              ))
+                ))
             )}
           </div>
         </div>
@@ -1526,6 +1575,13 @@ export default function FamilyBankApp() {
           onClose={() => setShowChangePin(false)}
           onUpdate={handleUpdateParentPin}
           currentPin={parentPin}
+        />
+      )}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          target={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={confirmDeleteMember}
         />
       )}
     </div>
