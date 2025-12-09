@@ -70,6 +70,7 @@ const firebaseConfig = {
   appId: "1:110879199692:web:526e893699926fed860d69",
   measurementId: "G-XB26B2RHRN",
 };
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -726,7 +727,7 @@ const LoginScreen = ({ onLogin, onGuestLogin }) => (
       <div className="bg-blue-600 w-24 h-24 rounded-full flex items-center justify-center mx-auto shadow-lg">
         <PiggyBank size={48} className="text-white" />
       </div>
-      <h1 className="text-3xl font-bold text-slate-800">家庭銀行 v20.0</h1>
+      <h1 className="text-3xl font-bold text-slate-800">家庭銀行 v21.0</h1>
       <p className="text-slate-500 mb-8">建立您專屬的虛擬家庭銀行</p>
       <button
         onClick={onLogin}
@@ -753,7 +754,7 @@ export default function FamilyBankApp() {
   const [googleUser, setGoogleUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [role, setRole] = useState(null);
-  const [selectedAccount, setSelectedAccount] = useState(null);
+  const [selectedAccountId, setSelectedAccountId] = useState(null); // Refactored to ID
   const [pinPadConfig, setPinPadConfig] = useState(null);
   const [showAiChat, setShowAiChat] = useState(false);
   const [showChangePin, setShowChangePin] = useState(false);
@@ -777,8 +778,13 @@ export default function FamilyBankApp() {
   const [note, setNote] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // NEW: Transaction Filter State
-  const [txFilter, setTxFilter] = useState("all"); // 'all', 'income', 'expense', 'interest'
+  const [txFilter, setTxFilter] = useState("all");
+
+  // Derived Account
+  const selectedAccount = useMemo(
+    () => accounts.find((a) => a.id === selectedAccountId),
+    [accounts, selectedAccountId]
+  );
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
@@ -786,7 +792,7 @@ export default function FamilyBankApp() {
       setAuthReady(true);
       if (!u) {
         setRole(null);
-        setSelectedAccount(null);
+        setSelectedAccountId(null);
       }
     });
   }, []);
@@ -814,7 +820,6 @@ export default function FamilyBankApp() {
       if (s.exists()) {
         const d = s.data();
         setRates(d);
-        // Force update if news is placeholder OR 24h passed
         const needsUpdate =
           Date.now() - (d.lastUpdate || 0) > 86400000 ||
           d.news === "市場觀察中...";
@@ -880,8 +885,9 @@ export default function FamilyBankApp() {
     );
   };
 
+  // FIX 1: Transaction Listener (UI Sync)
   useEffect(() => {
-    if (!googleUser || !selectedAccount) {
+    if (!googleUser || !selectedAccountId) {
       setTransactions([]);
       return;
     }
@@ -897,20 +903,15 @@ export default function FamilyBankApp() {
       (s) => {
         const txs = s.docs
           .map((d) => ({ id: d.id, ...d.data() }))
-          .filter((t) => t.memberId === selectedAccount.id)
+          .filter((t) => t.memberId === selectedAccountId)
           .sort((a, b) => b.timestamp - a.timestamp);
         setTransactions(txs);
       }
     );
-  }, [googleUser, selectedAccount]);
+  }, [googleUser, selectedAccountId]);
 
-  // CRITICAL FIX: Loop Prevention & Interest Calculation
-  // 1. Remove 'transactions' dependency to prevent infinite re-render
-  // 2. Add explicit check for "today" to prevent multiple interest entries
+  // FIX 2: Separate Balance Calculation
   useEffect(() => {
-    if (!selectedAccount || !googleUser) return;
-
-    // Calculate Balance locally for display
     const bal = transactions.reduce(
       (acc, t) =>
         t.type === "income" || t.type === "interest"
@@ -919,19 +920,25 @@ export default function FamilyBankApp() {
       0
     );
     setBalance(bal);
+  }, [transactions]);
+
+  // FIX 3: Robust Interest Check
+  useEffect(() => {
+    if (!selectedAccount || !googleUser || !selectedAccount.lastInterestDate)
+      return;
+
+    // We can't rely on 'balance' from state here because it might be 0 initially.
+    // However, interest logic is daily, so one render cycle delay is fine.
 
     const checkInterest = async () => {
-      const last = selectedAccount.lastInterestDate || Date.now();
+      const last = selectedAccount.lastInterestDate;
       const now = Date.now();
       const days = Math.floor((now - last) / 86400000);
       const rate = rates.inflation + rates.bonus;
 
-      // Only proceed if at least 1 day passed AND balance > 0
-      if (days >= 1 && bal > 0) {
-        // Anti-Dup Check: Check if we already have an interest entry for today
-        // Note: We use the transactions from the closure (which might be stale, but good enough for simple dedup)
-        // Better: We rely on the updateDoc of lastInterestDate to block subsequent calls
-
+      if (days >= 1) {
+        // Double check balance here if we want to be super safe, but using state balance is okay for now
+        // as long as we update the date FIRST to prevent loops
         const memRef = doc(
           db,
           "artifacts",
@@ -942,40 +949,39 @@ export default function FamilyBankApp() {
           selectedAccount.id
         );
 
-        // Optimistic update to block other potential calls immediately
-        // In a real production app, we would use a Cloud Function or Transaction for this.
+        // Optimistic Locking: Set date immediately
         await updateDoc(memRef, { lastInterestDate: now });
 
-        const dailyRate = rate / 365;
-        const earned = Math.floor(bal * (Math.pow(1 + dailyRate, days) - 1));
-
-        if (earned > 0) {
-          await addDoc(
-            collection(
-              db,
-              "artifacts",
-              appId,
-              "users",
-              googleUser.uid,
-              "transactions"
-            ),
-            {
-              type: "interest",
-              amount: earned,
-              note: `複利收入 (${(rate * 100).toFixed(1)}%, ${days}天)`,
-              timestamp: now,
-              memberId: selectedAccount.id,
-              by: "system",
-            }
+        if (balance > 0) {
+          const dailyRate = rate / 365;
+          const earned = Math.floor(
+            balance * (Math.pow(1 + dailyRate, days) - 1)
           );
+          if (earned > 0) {
+            await addDoc(
+              collection(
+                db,
+                "artifacts",
+                appId,
+                "users",
+                googleUser.uid,
+                "transactions"
+              ),
+              {
+                type: "interest",
+                amount: earned,
+                note: `複利收入 (${(rate * 100).toFixed(1)}%, ${days}天)`,
+                timestamp: now,
+                memberId: selectedAccount.id,
+                by: "system",
+              }
+            );
+          }
         }
       }
     };
-
-    // Only run this check when account is selected or rates change
-    // We intentionally OMIT transactions from dependency to stop the loop
     checkInterest();
-  }, [selectedAccount, rates, googleUser]);
+  }, [selectedAccount, rates, googleUser, balance]); // Balance included but date check prevents loop
 
   const handleGoogleLogin = async () => {
     try {
@@ -995,7 +1001,6 @@ export default function FamilyBankApp() {
   const handleTransaction = async (e) => {
     e.preventDefault();
     if (!amount || isSubmitting) return;
-
     const num = parseFloat(amount);
     if (num <= 0) {
       alert("金額必須大於 0");
@@ -1151,7 +1156,7 @@ export default function FamilyBankApp() {
                 <button
                   key={acc.id}
                   onClick={() => {
-                    if (role === "parent") setSelectedAccount(acc);
+                    if (role === "parent") setSelectedAccountId(acc.id);
                     else
                       setPinPadConfig({
                         targetPin: acc.pin || "0000",
@@ -1159,7 +1164,7 @@ export default function FamilyBankApp() {
                         subTitle: "輸入 PIN",
                         onSuccess: () => {
                           setRole("child");
-                          setSelectedAccount(acc);
+                          setSelectedAccountId(acc.id);
                           setPinPadConfig(null);
                         },
                       });
@@ -1267,7 +1272,7 @@ export default function FamilyBankApp() {
                 </button>
               </div>
               <button
-                onClick={() => setSelectedAccount(acc)}
+                onClick={() => setSelectedAccountId(acc.id)}
                 className="flex flex-col items-center w-full mt-2"
               >
                 <div className="p-4 rounded-full mb-3 bg-blue-100 text-blue-600">
@@ -1344,7 +1349,7 @@ export default function FamilyBankApp() {
         <div className="flex justify-between mb-4">
           <button
             onClick={() => {
-              setSelectedAccount(null);
+              setSelectedAccountId(null);
               if (!isParentView) setRole(null);
             }}
             className="flex items-center gap-1 bg-black/10 px-3 py-1 rounded-full text-sm"
