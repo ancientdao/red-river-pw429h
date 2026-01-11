@@ -39,9 +39,8 @@ import {
   Filter,
   Award,
   Star,
-  Gift,
   Crown,
-  Palette,
+  Loader2,
 } from "lucide-react";
 
 // Firebase Imports
@@ -75,7 +74,6 @@ const firebaseConfig = {
   appId: "1:110879199692:web:526e893699926fed860d69",
   measurementId: "G-XB26B2RHRN",
 };
-
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -92,7 +90,7 @@ const getApiKey = () => {
 const GEMINI_API_KEY = getApiKey();
 const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
 
-// --- Constants & Data ---
+// --- Constants ---
 const MARKET_NEWS = [
   { min: 0, max: 2, text: "風調雨順，物價平穩，通膨受控。", trend: "stable" },
   { min: 2, max: 3, text: "國際油價小幅上漲，運費增加。", trend: "up" },
@@ -194,8 +192,16 @@ const formatCurrency = (amount) =>
     style: "currency",
     currency: "TWD",
     minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(amount); // v24: Show decimals in formatted string if needed, but UI usually rounds. Let's keep 0 digits for main display but store precision. Actually, let's enable 2 digits for small amounts? No, stick to 0 for clean UI, but logic uses float.
+const formatCurrencyDisplay = (amount) =>
+  new Intl.NumberFormat("zh-TW", {
+    style: "currency",
+    currency: "TWD",
+    minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(amount);
+
 const formatPercent = (val) => `${(val * 100).toFixed(1)}%`;
 const formatDate = (dateValue) => {
   if (!dateValue) return "";
@@ -305,28 +311,21 @@ const DeleteConfirmModal = ({ target, onClose, onConfirm }) => (
   </div>
 );
 
-// Enhanced Chart with Smooth Curves and Gradients (Fixed NaN Error)
 const SavingsChart = ({ transactions, theme }) => {
   const data = useMemo(() => {
     if (!transactions || transactions.length === 0) return [];
-
-    // Sort transactions
     const sortedTxs = [...transactions].sort(
       (a, b) => (a.timestamp || 0) - (b.timestamp || 0)
     );
     let currentBal = 0;
     const points = [];
-
     sortedTxs.forEach((t) => {
-      const val = parseFloat(t.amount) || 0; // Fix: Handle NaN amount
+      const val = parseFloat(t.amount) || 0;
       if (t.type === "income" || t.type === "interest") currentBal += val;
       else currentBal -= val;
-      // Fix: Handle invalid timestamp by defaulting to Date.now(), though in logic it should be sorted
       const ts = t.timestamp || Date.now();
       points.push({ date: ts, value: Math.max(0, currentBal) });
     });
-
-    // Safety filter
     const validPoints = points.filter((p) => !isNaN(p.value) && !isNaN(p.date));
     return validPoints.slice(-30);
   }, [transactions]);
@@ -336,25 +335,21 @@ const SavingsChart = ({ transactions, theme }) => {
   const width = 400;
   const height = 150;
   const padding = 10;
-
-  // Safe maxVal to prevent divide by zero
   const maxVal = Math.max(...data.map((d) => d.value)) * 1.2 || 100;
   const minTime = data[0].date;
   const maxTime = data[data.length - 1].date;
-  const timeRange = maxTime - minTime || 1; // Prevent divide by zero
+  const timeRange = maxTime - minTime || 1;
 
   const getX = (time) => {
     const res =
       ((time - minTime) / timeRange) * (width - padding * 2) + padding;
     return isNaN(res) ? padding : res;
   };
-
   const getY = (val) => {
     const res = height - (val / maxVal) * (height - padding * 2) - padding;
     return isNaN(res) ? height - padding : res;
   };
 
-  // Generate Smooth Path
   let d = `M ${getX(data[0].date)} ${getY(data[0].value)}`;
   for (let i = 0; i < data.length - 1; i++) {
     const x_mid = (getX(data[i].date) + getX(data[i + 1].date)) / 2;
@@ -365,7 +360,6 @@ const SavingsChart = ({ transactions, theme }) => {
       data[i + 1].date
     )} ${getY(data[i + 1].value)}`;
   }
-
   const areaD = `${d} L ${getX(data[data.length - 1].date)} ${height} L ${getX(
     data[0].date
   )} ${height} Z`;
@@ -409,14 +403,14 @@ const SavingsChart = ({ transactions, theme }) => {
   );
 };
 
-// Achievement Stickers
 const StickerGallery = ({ transactions, balance, theme }) => {
-  const unlocked = useMemo(() => {
-    return ACHIEVEMENTS.filter((a) => a.condition(balance, transactions)).map(
-      (a) => a.id
-    );
-  }, [balance, transactions]);
-
+  const unlocked = useMemo(
+    () =>
+      ACHIEVEMENTS.filter((a) => a.condition(balance, transactions)).map(
+        (a) => a.id
+      ),
+    [balance, transactions]
+  );
   return (
     <div
       className={`${THEMES[theme]?.card} p-4 rounded-2xl shadow-sm border border-slate-100 mb-4`}
@@ -478,9 +472,7 @@ const ThemeSelector = ({ current, onChange }) => (
 const TransactionEditor = ({ tx, onClose, onSave, onDelete }) => {
   const [amount, setAmount] = useState(tx.amount);
   const [note, setNote] = useState(tx.note);
-  const [isConfirming, setIsConfirming] = useState(false); // v23 Fix: Internal confirmation
-
-  // v23 Fix: Show internal delete confirm to avoid window.confirm blocking
+  const [isConfirming, setIsConfirming] = useState(false);
   if (isConfirming) {
     return (
       <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
@@ -512,7 +504,6 @@ const TransactionEditor = ({ tx, onClose, onSave, onDelete }) => {
       </div>
     );
   }
-
   return (
     <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
       <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl animate-in zoom-in-95">
@@ -562,9 +553,11 @@ const TransactionEditor = ({ tx, onClose, onSave, onDelete }) => {
   );
 };
 
-// Reused Components (SmartPiggyAI, PinPad, etc. - Minimal changes for theme prop)
+// ... (SmartPiggyAI, PinPad, ChangePinModal, MemberFormModal, CentralBankControl, NewsTicker, LoginScreen same as v23 - logic intact)
+// For brevity, assuming these components are exactly as v23 but using formatCurrencyDisplay for UI.
+// Re-implementing critical ones to ensure they use correct currency display.
+
 const SmartPiggyAI = ({ userRole, userName, balance, rates, onClose }) => {
-  // ... (Same as v21, omitted for brevity, logic unchanged)
   const [messages, setMessages] = useState([
     {
       role: "ai",
@@ -586,9 +579,9 @@ const SmartPiggyAI = ({ userRole, userName, balance, rates, onClose }) => {
     setLoading(true);
     const context = `你是一個專為家庭銀行 App 設計的 AI 理財顧問「智慧小豬」。對象：${
       userRole === "parent" ? "家長" : "小孩"
-    } (${userName})。財務狀況：餘額 ${balance}元，通膨率 ${formatPercent(
-      rates.inflation
-    )}，加碼利息 ${formatPercent(
+    } (${userName})。財務狀況：餘額 ${formatCurrencyDisplay(
+      balance
+    )}元，通膨率 ${formatPercent(rates.inflation)}，加碼利息 ${formatPercent(
       rates.bonus
     )}。原則：勿用 Markdown 表格，用條列式清單或 Emoji。金額用 **粗體**。`;
     const res = await callGemini(userMsg, context);
@@ -671,6 +664,11 @@ const SmartPiggyAI = ({ userRole, userName, balance, rates, onClose }) => {
   );
 };
 
+// ... PinPad, ChangePinModal, MemberFormModal, CentralBankControl, NewsTicker, LoginScreen (Standard from v23)
+// Include them fully in the file below to ensure it's runnable.
+// Skipping re-pasting identical code for brevity in thought, but full code block will have them.
+
+// Re-paste helpers to ensure completeness
 const PinPad = ({ onSuccess, onCancel, targetPin, title, subTitle }) => {
   const [pin, setPin] = useState("");
   const handleNum = (n) => {
@@ -728,7 +726,6 @@ const PinPad = ({ onSuccess, onCancel, targetPin, title, subTitle }) => {
     </div>
   );
 };
-
 const ChangePinModal = ({ onClose, onUpdate, currentPin }) => {
   const [oldPin, setOldPin] = useState("");
   const [newPin, setNewPin] = useState("");
@@ -793,7 +790,6 @@ const ChangePinModal = ({ onClose, onUpdate, currentPin }) => {
     </div>
   );
 };
-
 const MemberFormModal = ({
   onClose,
   onSubmit,
@@ -867,7 +863,6 @@ const MemberFormModal = ({
     </div>
   );
 };
-
 const CentralBankControl = ({
   rates,
   onUpdateRates,
@@ -879,7 +874,6 @@ const CentralBankControl = ({
   const [inflation, setInflation] = useState(rates.inflation * 100);
   const [bonus, setBonus] = useState(rates.bonus * 100);
   const t = THEMES[theme] || THEMES.ocean;
-
   return (
     <div className="mb-4">
       <button
@@ -910,9 +904,7 @@ const CentralBankControl = ({
             外觀主題
           </div>
           <ThemeSelector current={theme} onChange={onThemeChange} />
-
           <div className="border-t border-slate-100 my-4"></div>
-
           <div className="flex justify-between items-center bg-slate-50 p-3 rounded-xl">
             <span className="font-bold text-slate-700 flex items-center gap-2">
               <Zap size={18} /> 自動調節通膨
@@ -976,7 +968,6 @@ const CentralBankControl = ({
     </div>
   );
 };
-
 const NewsTicker = ({ news }) => (
   <div className="bg-slate-900 text-white text-xs py-2 px-4 overflow-hidden whitespace-nowrap">
     <div className="flex items-center gap-4 animate-in slide-in-from-right duration-1000">
@@ -985,14 +976,13 @@ const NewsTicker = ({ news }) => (
     </div>
   </div>
 );
-
 const LoginScreen = ({ onLogin, onGuestLogin }) => (
   <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
     <div className="bg-white w-full max-w-md p-8 rounded-3xl shadow-xl text-center space-y-4">
       <div className="bg-blue-600 w-24 h-24 rounded-full flex items-center justify-center mx-auto shadow-lg">
         <PiggyBank size={48} className="text-white" />
       </div>
-      <h1 className="text-3xl font-bold text-slate-800">家庭銀行 v23.0</h1>
+      <h1 className="text-3xl font-bold text-slate-800">家庭銀行 v24.0</h1>
       <p className="text-slate-500 mb-8">建立您專屬的虛擬家庭銀行</p>
       <button
         onClick={onLogin}
@@ -1015,6 +1005,7 @@ const LoginScreen = ({ onLogin, onGuestLogin }) => (
   </div>
 );
 
+// --- Main Application ---
 export default function FamilyBankApp() {
   const [googleUser, setGoogleUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
@@ -1023,8 +1014,11 @@ export default function FamilyBankApp() {
   const [pinPadConfig, setPinPadConfig] = useState(null);
   const [showAiChat, setShowAiChat] = useState(false);
   const [showChangePin, setShowChangePin] = useState(false);
+
+  // v24: Initialize transactions as null to represent "loading"
+  const [transactions, setTransactions] = useState(null);
+
   const [accounts, setAccounts] = useState([]);
-  const [transactions, setTransactions] = useState([]);
   const [balance, setBalance] = useState(0);
   const [rates, setRates] = useState({
     inflation: 0.03,
@@ -1032,13 +1026,13 @@ export default function FamilyBankApp() {
     isAuto: true,
     news: "市場觀察中...",
     lastUpdate: 0,
-  }); // Default bonus 0
+  });
   const [parentPin, setParentPin] = useState("8888");
-  const [appTheme, setAppTheme] = useState("ocean"); // Default Theme
+  const [appTheme, setAppTheme] = useState("ocean");
 
   const [modalConfig, setModalConfig] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const [editingTx, setEditingTx] = useState(null); // Transaction Edit State
+  const [editingTx, setEditingTx] = useState(null);
   const [isTxModalOpen, setIsTxModalOpen] = useState(false);
   const [transType, setTransType] = useState("expense");
   const [amount, setAmount] = useState("");
@@ -1131,7 +1125,7 @@ export default function FamilyBankApp() {
     const drift = (Math.random() - 0.5) * 0.03;
     let newCPI = Math.max(0.005, Math.min(0.08, current + drift));
     const today = new Date().toLocaleDateString("zh-TW");
-    const newsPrompt = `今天是 ${today}。請扮演一位財經記者，根據真實世界的經濟氛圍（例如 AI 發展、綠能、通膨狀況、全球股市），為小學生寫一則 20 字以內的簡易財經快訊。請只回傳標題內容，不要有任何引號或解釋。`;
+    const newsPrompt = `今天是 ${today}。請扮演一位財經記者，根據真實世界的經濟氛圍，為小學生寫一則 20 字以內的簡易財經快訊。請只回傳標題內容，不要有任何引號。`;
     let aiNews = "";
     try {
       aiNews = await callGemini(newsPrompt, "You are a reporter.");
@@ -1159,7 +1153,7 @@ export default function FamilyBankApp() {
 
   useEffect(() => {
     if (!googleUser || !selectedAccountId) {
-      setTransactions([]);
+      setTransactions(null);
       return;
     }
     return onSnapshot(
@@ -1182,25 +1176,45 @@ export default function FamilyBankApp() {
   }, [googleUser, selectedAccountId]);
 
   useEffect(() => {
-    const bal = transactions.reduce(
+    if (transactions) {
+      const bal = transactions.reduce(
+        (acc, t) =>
+          t.type === "income" || t.type === "interest"
+            ? acc + parseFloat(t.amount)
+            : acc - parseFloat(t.amount),
+        0
+      );
+      setBalance(bal);
+    }
+  }, [transactions]);
+
+  // v24: Fixed Interest Logic
+  useEffect(() => {
+    if (
+      !selectedAccount ||
+      !googleUser ||
+      !selectedAccount.lastInterestDate ||
+      transactions === null
+    )
+      return;
+
+    // Safety check: calculate balance from transactions, don't rely on state which might lag
+    const currentBal = transactions.reduce(
       (acc, t) =>
         t.type === "income" || t.type === "interest"
           ? acc + parseFloat(t.amount)
           : acc - parseFloat(t.amount),
       0
     );
-    setBalance(bal);
-  }, [transactions]);
 
-  useEffect(() => {
-    if (!selectedAccount || !googleUser || !selectedAccount.lastInterestDate)
-      return;
     const checkInterest = async () => {
       const last = selectedAccount.lastInterestDate;
       const now = Date.now();
       const days = Math.floor((now - last) / 86400000);
       const rate = rates.inflation + rates.bonus;
+
       if (days >= 1) {
+        // v24: Optimistic update first
         const memRef = doc(
           db,
           "artifacts",
@@ -1211,11 +1225,14 @@ export default function FamilyBankApp() {
           selectedAccount.id
         );
         await updateDoc(memRef, { lastInterestDate: now });
-        if (balance > 0) {
+
+        if (currentBal > 0) {
+          // v24: Keep precision (2 decimals) for small amounts
           const dailyRate = rate / 365;
-          const earned = Math.floor(
-            balance * (Math.pow(1 + dailyRate, days) - 1)
-          );
+          const rawEarned = currentBal * (Math.pow(1 + dailyRate, days) - 1);
+          // Round to 2 decimals to avoid floating point dust, but keep small earnings
+          const earned = Math.round(rawEarned * 100) / 100;
+
           if (earned > 0) {
             await addDoc(
               collection(
@@ -1240,8 +1257,9 @@ export default function FamilyBankApp() {
       }
     };
     checkInterest();
-  }, [selectedAccount, rates, googleUser, balance]);
+  }, [selectedAccount, rates, googleUser, transactions]); // transactions dependency ensures we have data
 
+  // ... (Handlers) ...
   const handleGoogleLogin = async () => {
     try {
       await signInWithPopup(auth, new GoogleAuthProvider());
@@ -1365,7 +1383,6 @@ export default function FamilyBankApp() {
       );
   };
 
-  // v23 Fix: Remove window.confirm for delete transaction
   const handleEditTx = async (id, newAmount, newNote) => {
     try {
       await updateDoc(
@@ -1386,7 +1403,6 @@ export default function FamilyBankApp() {
     }
   };
   const handleDeleteTx = async (id) => {
-    // window.confirm removed, handled by UI modal
     try {
       await deleteDoc(
         doc(db, "artifacts", appId, "users", googleUser.uid, "transactions", id)
@@ -1411,6 +1427,7 @@ export default function FamilyBankApp() {
       />
     );
 
+  // ... (Views for Role Selection) ...
   if (!role && !selectedAccount) {
     return (
       <div
@@ -1488,14 +1505,11 @@ export default function FamilyBankApp() {
             </div>
           </div>
         </div>
-
-        {/* v23 Footer */}
         <div className="py-6 text-center">
           <p className="text-xs text-slate-400 font-medium opacity-60">
             王維與 Gemini 合作開發
           </p>
         </div>
-
         {pinPadConfig && (
           <PinPad {...pinPadConfig} onCancel={() => setPinPadConfig(null)} />
         )}
@@ -1503,6 +1517,7 @@ export default function FamilyBankApp() {
     );
   }
 
+  // ... (Parent Dashboard) ...
   if (role === "parent" && !selectedAccount) {
     return (
       <div className={`min-h-screen p-6 ${currentThemeData.bg}`}>
@@ -1645,9 +1660,21 @@ export default function FamilyBankApp() {
     );
   }
 
+  // Detail View
   const isParentView = role === "parent";
   const totalRate = rates.inflation + rates.bonus;
   const monthlyInterestProj = Math.floor((balance * totalRate) / 12);
+
+  // v24: Wait for transactions to load to prevent 0 balance flash
+  if (transactions === null) {
+    return (
+      <div
+        className={`min-h-screen flex items-center justify-center ${currentThemeData.bg}`}
+      >
+        <Loader2 className="animate-spin text-slate-400" size={32} />
+      </div>
+    );
+  }
 
   return (
     <div className={`min-h-screen pb-20 font-sans ${currentThemeData.bg}`}>
@@ -1678,7 +1705,9 @@ export default function FamilyBankApp() {
           <span className="text-sm opacity-80">
             {isParentView ? "目前餘額" : "我的存款"}
           </span>
-          <h2 className="text-5xl font-bold mt-1">{formatCurrency(balance)}</h2>
+          <h2 className="text-5xl font-bold mt-1">
+            {formatCurrencyDisplay(balance)}
+          </h2>
         </div>
       </header>
       <main className="p-5 space-y-4 max-w-lg mx-auto">
