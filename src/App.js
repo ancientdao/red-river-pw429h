@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   PiggyBank,
   ArrowUpCircle,
@@ -27,20 +27,17 @@ import {
   Newspaper,
   Globe,
   Zap,
-  LogIn,
-  Sparkles,
-  MessageCircle,
-  Send,
   UserCheck,
-  Trash2,
-  Edit,
-  Save,
   AlertTriangle,
-  Filter,
+  Calculator,
   Award,
   Star,
   Crown,
   Loader2,
+  Info,
+  Trash2,
+  Edit,
+  Save, // v26 修復：補回被誤刪的圖示！
 } from "lucide-react";
 
 // Firebase Imports
@@ -65,30 +62,11 @@ import {
 } from "firebase/auth";
 
 // --- Firebase Configuration ---
-const firebaseConfig = {
-  apiKey: "AIzaSyDpX498B8lJghW6fwnMVFZ5YLW_c226ppw",
-  authDomain: "home-bank-72dee.firebaseapp.com",
-  projectId: "home-bank-72dee",
-  storageBucket: "home-bank-72dee.firebasestorage.app",
-  messagingSenderId: "110879199692",
-  appId: "1:110879199692:web:526e893699926fed860d69",
-  measurementId: "G-XB26B2RHRN",
-};
+const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
-
-// --- Gemini API Configuration ---
-const getApiKey = () => {
-  try {
-    const key = process.env.REACT_APP_GEMINI_API_KEY;
-    if (key) return key;
-  } catch (e) {}
-  return "";
-};
-const GEMINI_API_KEY = getApiKey();
-const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
 
 // --- Constants ---
 const MARKET_NEWS = [
@@ -145,34 +123,66 @@ const THEMES = {
   },
 };
 
+// 擴充成就系統
 const ACHIEVEMENTS = [
   {
     id: "first_save",
     name: "第一桶金",
-    desc: "存入第一筆錢",
-    icon: <Star size={24} />,
+    desc: "完成人生第一次存錢",
+    icon: "🪙",
     condition: (bal, txs) => txs.some((t) => t.type === "income"),
   },
   {
+    id: "saver_100",
+    name: "百元大戶",
+    desc: "存款餘額達到 $100",
+    icon: "💵",
+    condition: (bal) => bal >= 100,
+  },
+  {
     id: "saver_1000",
-    name: "小小儲蓄家",
-    desc: "存款達到 $1,000",
-    icon: <PiggyBank size={24} />,
+    name: "千元富翁",
+    desc: "存款餘額達到 $1,000",
+    icon: "💰",
     condition: (bal) => bal >= 1000,
   },
   {
     id: "saver_5000",
-    name: "超級銀行家",
-    desc: "存款達到 $5,000",
-    icon: <Crown size={24} />,
+    name: "理財達人",
+    desc: "存款餘額達到 $5,000",
+    icon: "🏦",
     condition: (bal) => bal >= 5000,
   },
   {
-    id: "interest_earner",
-    name: "複利魔法師",
-    desc: "獲得過利息收入",
-    icon: <Sparkles size={24} />,
-    condition: (bal, txs) => txs.some((t) => t.type === "interest"),
+    id: "saver_10000",
+    name: "萬元大亨",
+    desc: "存款餘額達到 $10,000",
+    icon: "👑",
+    condition: (bal) => bal >= 10000,
+  },
+  {
+    id: "interest_1",
+    name: "初嚐甜頭",
+    desc: "獲得第 1 次複利收入",
+    icon: "🌱",
+    condition: (bal, txs) =>
+      txs.filter((t) => t.type === "interest").length >= 1,
+  },
+  {
+    id: "interest_10",
+    name: "複利農夫",
+    desc: "累積獲得 10 次複利收入",
+    icon: "🌿",
+    condition: (bal, txs) =>
+      txs.filter((t) => t.type === "interest").length >= 10,
+  },
+  {
+    id: "interest_30",
+    name: "時間的朋友",
+    desc: "累積獲得 30 次複利收入",
+    icon: "🌳",
+    condition: (bal, txs) =>
+      txs.filter((t) => t.type === "interest").length >= 30,
   },
 ];
 
@@ -193,7 +203,7 @@ const formatCurrency = (amount) =>
     currency: "TWD",
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
-  }).format(amount); // v24: Show decimals in formatted string if needed, but UI usually rounds. Let's keep 0 digits for main display but store precision. Actually, let's enable 2 digits for small amounts? No, stick to 0 for clean UI, but logic uses float.
+  }).format(amount);
 const formatCurrencyDisplay = (amount) =>
   new Intl.NumberFormat("zh-TW", {
     style: "currency",
@@ -201,7 +211,6 @@ const formatCurrencyDisplay = (amount) =>
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(amount);
-
 const formatPercent = (val) => `${(val * 100).toFixed(1)}%`;
 const formatDate = (dateValue) => {
   if (!dateValue) return "";
@@ -221,65 +230,7 @@ const withTimeout = (promise, ms = 10000) =>
     ),
   ]);
 
-const callGemini = async (prompt, systemContext) => {
-  if (!GEMINI_API_KEY) return "錯誤：找不到金鑰。請檢查 Vercel 環境變數設定。";
-  const delays = [1000, 2000, 4000];
-  for (let i = 0; i <= 3; i++) {
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            systemInstruction: { parts: [{ text: systemContext }] },
-          }),
-        }
-      );
-      if (!response.ok) {
-        if ((response.status === 503 || response.status === 429) && i < 3) {
-          await new Promise((r) => setTimeout(r, delays[i]));
-          continue;
-        }
-        throw new Error(`API Error: ${response.status}`);
-      }
-      const data = await response.json();
-      return (
-        data.candidates?.[0]?.content?.parts?.[0]?.text || "小豬正在思考..."
-      );
-    } catch (error) {
-      if (i < 3) {
-        await new Promise((r) => setTimeout(r, delays[i]));
-        continue;
-      }
-      console.error("Gemini Call Failed:", error);
-      return `連線失敗 (${error.message})。`;
-    }
-  }
-};
-
 // --- Components ---
-
-const FormattedText = ({ text }) => {
-  if (!text) return null;
-  return text.split("\n").map((line, index) => {
-    const parts = line.split(/\*\*(.*?)\*\*/g);
-    return (
-      <div key={index} className="min-h-[1.2em]">
-        {parts.map((part, i) =>
-          i % 2 === 1 ? (
-            <strong key={i} className="text-indigo-700 font-bold">
-              {part}
-            </strong>
-          ) : (
-            part
-          )
-        )}
-      </div>
-    );
-  });
-};
 
 const DeleteConfirmModal = ({ target, onClose, onConfirm }) => (
   <div className="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center p-4 animate-in zoom-in-95">
@@ -403,47 +354,215 @@ const SavingsChart = ({ transactions, theme }) => {
   );
 };
 
+// 複利計算機 Modal
+const CompoundCalculator = ({ currentBalance, currentRate, onClose }) => {
+  const [principal, setPrincipal] = useState(currentBalance || 1000);
+  const [monthlyAdd, setMonthlyAdd] = useState(0);
+  const [years, setYears] = useState(5);
+
+  const calculateFutureValue = () => {
+    const r = currentRate;
+    const n = 12;
+    const t = years;
+    const PMT = monthlyAdd;
+    const P = principal;
+    const ratePerPeriod = r / n;
+    const periods = n * t;
+
+    if (ratePerPeriod === 0) return P + PMT * periods;
+
+    const compoundFactor = Math.pow(1 + ratePerPeriod, periods);
+    const futurePrincipal = P * compoundFactor;
+    const futureContributions = PMT * ((compoundFactor - 1) / ratePerPeriod);
+
+    return futurePrincipal + futureContributions;
+  };
+
+  const finalAmount = calculateFutureValue();
+  const totalInvested = principal + monthlyAdd * 12 * years;
+  const totalInterest = finalAmount - totalInvested;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl animate-in zoom-in-95">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-xl font-bold flex items-center gap-2 text-blue-600">
+            <Calculator size={24} /> 複利計算機
+          </h3>
+          <button
+            onClick={onClose}
+            className="p-1 text-slate-400 hover:text-slate-600 bg-slate-100 rounded-full"
+          >
+            <X size={20} />
+          </button>
+        </div>
+        <p className="text-xs text-slate-500 mb-6">
+          來算算看，如果持續存錢，未來會變成多少？
+        </p>
+        <div className="space-y-4 mb-6">
+          <div>
+            <label className="flex justify-between text-sm font-bold text-slate-600 mb-1">
+              <span>目前本金</span>
+              <span className="text-blue-600">${principal}</span>
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="50000"
+              step="500"
+              value={principal}
+              onChange={(e) => setPrincipal(Number(e.target.value))}
+              className="w-full accent-blue-500"
+            />
+          </div>
+          <div>
+            <label className="flex justify-between text-sm font-bold text-slate-600 mb-1">
+              <span>每月再存入</span>
+              <span className="text-emerald-600">${monthlyAdd}</span>
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="5000"
+              step="100"
+              value={monthlyAdd}
+              onChange={(e) => setMonthlyAdd(Number(e.target.value))}
+              className="w-full accent-emerald-500"
+            />
+          </div>
+          <div>
+            <label className="flex justify-between text-sm font-bold text-slate-600 mb-1">
+              <span>投資年限 (年)</span>
+              <span className="text-purple-600">{years} 年</span>
+            </label>
+            <input
+              type="range"
+              min="1"
+              max="20"
+              step="1"
+              value={years}
+              onChange={(e) => setYears(Number(e.target.value))}
+              className="w-full accent-purple-500"
+            />
+          </div>
+        </div>
+        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+          <div className="text-center mb-4">
+            <div className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">
+              {years} 年後的總資產
+            </div>
+            <div className="text-4xl font-bold text-slate-800">
+              {formatCurrencyDisplay(finalAmount)}
+            </div>
+          </div>
+          <div className="flex justify-between text-xs font-bold pt-3 border-t border-slate-200">
+            <span className="text-slate-500">
+              自己存的錢: <br />
+              <span className="text-slate-700 text-sm">
+                ${formatCurrencyDisplay(totalInvested)}
+              </span>
+            </span>
+            <span className="text-emerald-600 text-right">
+              利息賺的錢: <br />
+              <span className="text-emerald-500 text-sm">
+                +${formatCurrencyDisplay(totalInterest)}
+              </span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const StickerGallery = ({ transactions, balance, theme }) => {
-  const unlocked = useMemo(
+  const [selectedSticker, setSelectedSticker] = useState(null);
+  const unlockedIds = useMemo(
     () =>
       ACHIEVEMENTS.filter((a) => a.condition(balance, transactions)).map(
         (a) => a.id
       ),
     [balance, transactions]
   );
+
   return (
     <div
       className={`${THEMES[theme]?.card} p-4 rounded-2xl shadow-sm border border-slate-100 mb-4`}
     >
-      <h3 className="font-bold mb-3 flex items-center gap-2 text-sm opacity-80">
-        <Award size={16} /> 成就貼紙館
-      </h3>
+      <div className="flex justify-between items-center mb-3">
+        <h3 className="font-bold flex items-center gap-2 text-sm opacity-80">
+          <Award size={16} /> 成就貼紙館
+        </h3>
+        <span className="text-xs font-bold opacity-60">
+          {unlockedIds.length} / {ACHIEVEMENTS.length}
+        </span>
+      </div>
       <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide">
         {ACHIEVEMENTS.map((ach) => {
-          const isUnlocked = unlocked.includes(ach.id);
+          const isUnlocked = unlockedIds.includes(ach.id);
           return (
-            <div
+            <button
               key={ach.id}
-              className={`flex-shrink-0 flex flex-col items-center w-20 ${
+              onClick={() => setSelectedSticker({ ...ach, isUnlocked })}
+              className={`flex-shrink-0 flex flex-col items-center w-16 transition-transform active:scale-95 ${
                 isUnlocked ? "opacity-100" : "opacity-40 grayscale"
               }`}
             >
               <div
                 className={`w-14 h-14 rounded-full flex items-center justify-center mb-1 text-2xl shadow-sm ${
-                  isUnlocked
-                    ? "bg-yellow-100 text-yellow-600"
-                    : "bg-slate-100 text-slate-400"
+                  isUnlocked ? "bg-yellow-100" : "bg-slate-100"
                 }`}
               >
                 {ach.icon}
               </div>
-              <span className="text-[10px] font-bold text-center leading-tight">
+              <span className="text-[10px] font-bold text-center leading-tight truncate w-full">
                 {ach.name}
               </span>
-            </div>
+            </button>
           );
         })}
       </div>
+
+      {selectedSticker && (
+        <div
+          className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4"
+          onClick={() => setSelectedSticker(null)}
+        >
+          <div
+            className="bg-white w-full max-w-xs rounded-3xl p-8 text-center shadow-2xl animate-in zoom-in-95"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className={`w-24 h-24 text-5xl rounded-full flex items-center justify-center mx-auto mb-4 shadow-inner ${
+                selectedSticker.isUnlocked
+                  ? "bg-yellow-100"
+                  : "bg-slate-100 grayscale"
+              }`}
+            >
+              {selectedSticker.icon}
+            </div>
+            <h3 className="text-2xl font-bold text-slate-800 mb-2">
+              {selectedSticker.name}
+            </h3>
+            <p className="text-slate-500 mb-4">{selectedSticker.desc}</p>
+            <div
+              className={`inline-block px-4 py-1 rounded-full text-xs font-bold ${
+                selectedSticker.isUnlocked
+                  ? "bg-emerald-100 text-emerald-600"
+                  : "bg-slate-100 text-slate-400"
+              }`}
+            >
+              {selectedSticker.isUnlocked ? "✅ 已解鎖" : "🔒 未解鎖"}
+            </div>
+            <button
+              onClick={() => setSelectedSticker(null)}
+              className="w-full mt-6 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold"
+            >
+              關閉
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -553,122 +672,6 @@ const TransactionEditor = ({ tx, onClose, onSave, onDelete }) => {
   );
 };
 
-// ... (SmartPiggyAI, PinPad, ChangePinModal, MemberFormModal, CentralBankControl, NewsTicker, LoginScreen same as v23 - logic intact)
-// For brevity, assuming these components are exactly as v23 but using formatCurrencyDisplay for UI.
-// Re-implementing critical ones to ensure they use correct currency display.
-
-const SmartPiggyAI = ({ userRole, userName, balance, rates, onClose }) => {
-  const [messages, setMessages] = useState([
-    {
-      role: "ai",
-      text: `嗨！我是你的 AI 理財顧問「智慧小豬」🐷。${userName}，你想問我關於錢的問題嗎？`,
-    },
-  ]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const scrollRef = useRef(null);
-  useEffect(() => {
-    if (scrollRef.current)
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages]);
-  const handleSend = async () => {
-    if (!input.trim() || loading) return;
-    const userMsg = input;
-    setInput("");
-    setMessages((prev) => [...prev, { role: "user", text: userMsg }]);
-    setLoading(true);
-    const context = `你是一個專為家庭銀行 App 設計的 AI 理財顧問「智慧小豬」。對象：${
-      userRole === "parent" ? "家長" : "小孩"
-    } (${userName})。財務狀況：餘額 ${formatCurrencyDisplay(
-      balance
-    )}元，通膨率 ${formatPercent(rates.inflation)}，加碼利息 ${formatPercent(
-      rates.bonus
-    )}。原則：勿用 Markdown 表格，用條列式清單或 Emoji。金額用 **粗體**。`;
-    const res = await callGemini(userMsg, context);
-    setMessages((prev) => [...prev, { role: "ai", text: res }]);
-    setLoading(false);
-  };
-  const suggestions =
-    userRole === "child"
-      ? ["我可以買玩具嗎？", "錢為什麼會變多？", "什麼是通膨？"]
-      : ["如何教孩子延遲享樂？", "現在的通膨率適合怎麼教？"];
-  return (
-    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 animate-in fade-in">
-      <div className="bg-white w-full max-w-md h-[500px] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
-        <div className="bg-gradient-to-r from-purple-500 to-indigo-600 p-4 flex justify-between items-center text-white">
-          <span className="font-bold text-lg flex items-center gap-2">
-            <Sparkles size={20} /> 智慧小豬顧問
-          </span>
-          <button onClick={onClose}>
-            <X size={20} />
-          </button>
-        </div>
-        <div
-          className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50"
-          ref={scrollRef}
-        >
-          {messages.map((m, i) => (
-            <div
-              key={i}
-              className={`flex ${
-                m.role === "user" ? "justify-end" : "justify-start"
-              }`}
-            >
-              <div
-                className={`max-w-[85%] p-3 rounded-2xl text-sm whitespace-pre-wrap ${
-                  m.role === "user"
-                    ? "bg-indigo-600 text-white"
-                    : "bg-white text-slate-700 shadow-sm"
-                }`}
-              >
-                {m.role === "ai" ? <FormattedText text={m.text} /> : m.text}
-              </div>
-            </div>
-          ))}
-          {loading && (
-            <div className="text-xs text-slate-400 px-4">小豬輸入中...</div>
-          )}
-        </div>
-        {!loading && messages.length < 3 && (
-          <div className="px-4 py-2 flex gap-2 overflow-x-auto">
-            {suggestions.map((s) => (
-              <button
-                key={s}
-                onClick={() => setInput(s)}
-                className="whitespace-nowrap bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full text-xs font-bold mr-2"
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="p-4 bg-white border-t border-slate-100 flex gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => e.key === "Enter" && handleSend()}
-            placeholder="問問小豬..."
-            className="flex-1 bg-slate-100 rounded-xl px-4 py-2 outline-none"
-          />
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || loading}
-            className="bg-indigo-600 text-white p-2 rounded-xl"
-          >
-            <Send size={20} />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ... PinPad, ChangePinModal, MemberFormModal, CentralBankControl, NewsTicker, LoginScreen (Standard from v23)
-// Include them fully in the file below to ensure it's runnable.
-// Skipping re-pasting identical code for brevity in thought, but full code block will have them.
-
-// Re-paste helpers to ensure completeness
 const PinPad = ({ onSuccess, onCancel, targetPin, title, subTitle }) => {
   const [pin, setPin] = useState("");
   const handleNum = (n) => {
@@ -968,21 +971,25 @@ const CentralBankControl = ({
     </div>
   );
 };
-const NewsTicker = ({ news }) => (
-  <div className="bg-slate-900 text-white text-xs py-2 px-4 overflow-hidden whitespace-nowrap">
-    <div className="flex items-center gap-4 animate-in slide-in-from-right duration-1000">
-      <span className="bg-red-500 px-1.5 rounded font-bold">BREAKING</span>
-      {news}
+const NewsTicker = ({ news }) => {
+  // Safe default to prevent crash if news is somehow undefined
+  const displayNews = news || "市場觀察中...";
+  return (
+    <div className="bg-slate-900 text-white text-xs py-2 px-4 overflow-hidden whitespace-nowrap">
+      <div className="flex items-center gap-4 animate-in slide-in-from-right duration-1000">
+        <span className="bg-red-500 px-1.5 rounded font-bold">BREAKING</span>
+        {displayNews}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 const LoginScreen = ({ onLogin, onGuestLogin }) => (
   <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
     <div className="bg-white w-full max-w-md p-8 rounded-3xl shadow-xl text-center space-y-4">
       <div className="bg-blue-600 w-24 h-24 rounded-full flex items-center justify-center mx-auto shadow-lg">
         <PiggyBank size={48} className="text-white" />
       </div>
-      <h1 className="text-3xl font-bold text-slate-800">家庭銀行 v24.0</h1>
+      <h1 className="text-3xl font-bold text-slate-800">家庭銀行 v26.0</h1>
       <p className="text-slate-500 mb-8">建立您專屬的虛擬家庭銀行</p>
       <button
         onClick={onLogin}
@@ -1012,12 +1019,10 @@ export default function FamilyBankApp() {
   const [role, setRole] = useState(null);
   const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [pinPadConfig, setPinPadConfig] = useState(null);
-  const [showAiChat, setShowAiChat] = useState(false);
   const [showChangePin, setShowChangePin] = useState(false);
+  const [showCalculator, setShowCalculator] = useState(false);
 
-  // v24: Initialize transactions as null to represent "loading"
   const [transactions, setTransactions] = useState(null);
-
   const [accounts, setAccounts] = useState([]);
   const [balance, setBalance] = useState(0);
   const [rates, setRates] = useState({
@@ -1038,8 +1043,12 @@ export default function FamilyBankApp() {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-
   const [txFilter, setTxFilter] = useState("all");
+
+  const [interestFeedback, setInterestFeedback] = useState(null);
+
+  // v26: 防護鎖，防止 React 渲染與 Firebase Snapshot 時間差導致的重複發息
+  const isProcessingInterest = useRef(false);
 
   const selectedAccount = useMemo(
     () => accounts.find((a) => a.id === selectedAccountId),
@@ -1125,27 +1134,16 @@ export default function FamilyBankApp() {
     const drift = (Math.random() - 0.5) * 0.03;
     let newCPI = Math.max(0.005, Math.min(0.08, current + drift));
     const today = new Date().toLocaleDateString("zh-TW");
-    const newsPrompt = `今天是 ${today}。請扮演一位財經記者，根據真實世界的經濟氛圍，為小學生寫一則 20 字以內的簡易財經快訊。請只回傳標題內容，不要有任何引號。`;
-    let aiNews = "";
-    try {
-      aiNews = await callGemini(newsPrompt, "You are a reporter.");
-    } catch (e) {
-      console.error("News gen failed", e);
-    }
-    if (!aiNews || aiNews.includes("錯誤")) {
-      const item =
-        MARKET_NEWS.find(
-          (n) => newCPI * 100 >= n.min && newCPI * 100 < n.max
-        ) || MARKET_NEWS[0];
-      aiNews = item.text;
-    }
+    const item =
+      MARKET_NEWS.find((n) => newCPI * 100 >= n.min && newCPI * 100 < n.max) ||
+      MARKET_NEWS[0];
     await updateDoc(
       doc(db, "artifacts", appId, "users", googleUser.uid, "settings", "rates"),
       {
         inflation: newCPI,
-        news: `${today} 財經快訊：${aiNews} (CPI: ${(newCPI * 100).toFixed(
-          1
-        )}%)`,
+        news: `${today} 財經快訊：今日 CPI ${(newCPI * 100).toFixed(1)}%。${
+          item.text
+        }`,
         lastUpdate: Date.now(),
       }
     );
@@ -1188,7 +1186,7 @@ export default function FamilyBankApp() {
     }
   }, [transactions]);
 
-  // v24: Fixed Interest Logic
+  // v26: 加入 useRef 鎖的穩健利息結算機制
   useEffect(() => {
     if (
       !selectedAccount ||
@@ -1198,7 +1196,6 @@ export default function FamilyBankApp() {
     )
       return;
 
-    // Safety check: calculate balance from transactions, don't rely on state which might lag
     const currentBal = transactions.reduce(
       (acc, t) =>
         t.type === "income" || t.type === "interest"
@@ -1213,53 +1210,67 @@ export default function FamilyBankApp() {
       const days = Math.floor((now - last) / 86400000);
       const rate = rates.inflation + rates.bonus;
 
-      if (days >= 1) {
-        // v24: Optimistic update first
-        const memRef = doc(
-          db,
-          "artifacts",
-          appId,
-          "users",
-          googleUser.uid,
-          "members",
-          selectedAccount.id
-        );
-        await updateDoc(memRef, { lastInterestDate: now });
+      // 如果相差超過 1 天，且當下沒有正在處理利息
+      if (days >= 1 && !isProcessingInterest.current) {
+        isProcessingInterest.current = true; // 上鎖
 
-        if (currentBal > 0) {
-          // v24: Keep precision (2 decimals) for small amounts
-          const dailyRate = rate / 365;
-          const rawEarned = currentBal * (Math.pow(1 + dailyRate, days) - 1);
-          // Round to 2 decimals to avoid floating point dust, but keep small earnings
-          const earned = Math.round(rawEarned * 100) / 100;
+        try {
+          const memRef = doc(
+            db,
+            "artifacts",
+            appId,
+            "users",
+            googleUser.uid,
+            "members",
+            selectedAccount.id
+          );
+          // 立即更新資料庫中的時間，防止其他客戶端重複執行
+          await updateDoc(memRef, { lastInterestDate: now });
 
-          if (earned > 0) {
-            await addDoc(
-              collection(
-                db,
-                "artifacts",
-                appId,
-                "users",
-                googleUser.uid,
-                "transactions"
-              ),
-              {
-                type: "interest",
-                amount: earned,
-                note: `複利收入 (${(rate * 100).toFixed(1)}%, ${days}天)`,
-                timestamp: now,
-                memberId: selectedAccount.id,
-                by: "system",
-              }
-            );
+          if (currentBal > 0) {
+            const dailyRate = rate / 365;
+            const rawEarned = currentBal * (Math.pow(1 + dailyRate, days) - 1);
+            const earned = Math.round(rawEarned * 100) / 100;
+
+            if (earned > 0) {
+              await addDoc(
+                collection(
+                  db,
+                  "artifacts",
+                  appId,
+                  "users",
+                  googleUser.uid,
+                  "transactions"
+                ),
+                {
+                  type: "interest",
+                  amount: earned,
+                  note: `系統結算複利 (${(rate * 100).toFixed(
+                    1
+                  )}%, 累積 ${days} 天)`,
+                  timestamp: now,
+                  memberId: selectedAccount.id,
+                  by: "system",
+                }
+              );
+
+              setInterestFeedback({ amount: earned, days: days });
+              setTimeout(() => setInterestFeedback(null), 5000);
+            }
           }
+        } catch (error) {
+          console.error("Interest calculation failed", error);
+        } finally {
+          // 等待一段時間讓 Firebase 的 Snapshot 確定更新後，再解開鎖
+          setTimeout(() => {
+            isProcessingInterest.current = false;
+          }, 2000);
         }
       }
     };
     checkInterest();
-  }, [selectedAccount, rates, googleUser, transactions]); // transactions dependency ensures we have data
+  }, [selectedAccount, rates, googleUser, transactions]);
 
-  // ... (Handlers) ...
   const handleGoogleLogin = async () => {
     try {
       await signInWithPopup(auth, new GoogleAuthProvider());
@@ -1427,7 +1438,6 @@ export default function FamilyBankApp() {
       />
     );
 
-  // ... (Views for Role Selection) ...
   if (!role && !selectedAccount) {
     return (
       <div
@@ -1517,7 +1527,6 @@ export default function FamilyBankApp() {
     );
   }
 
-  // ... (Parent Dashboard) ...
   if (role === "parent" && !selectedAccount) {
     return (
       <div className={`min-h-screen p-6 ${currentThemeData.bg}`}>
@@ -1660,12 +1669,10 @@ export default function FamilyBankApp() {
     );
   }
 
-  // Detail View
   const isParentView = role === "parent";
   const totalRate = rates.inflation + rates.bonus;
   const monthlyInterestProj = Math.floor((balance * totalRate) / 12);
 
-  // v24: Wait for transactions to load to prevent 0 balance flash
   if (transactions === null) {
     return (
       <div
@@ -1677,7 +1684,26 @@ export default function FamilyBankApp() {
   }
 
   return (
-    <div className={`min-h-screen pb-20 font-sans ${currentThemeData.bg}`}>
+    <div
+      className={`min-h-screen pb-20 font-sans relative ${currentThemeData.bg}`}
+    >
+      {interestFeedback && (
+        <div className="absolute top-4 left-4 right-4 z-50 animate-in slide-in-from-top-4 fade-in">
+          <div className="bg-emerald-500 text-white p-4 rounded-2xl shadow-xl flex items-center gap-3">
+            <div className="bg-white/20 p-2 rounded-full">
+              <TrendingUp size={20} />
+            </div>
+            <div>
+              <p className="font-bold text-sm">系統結算成功！</p>
+              <p className="text-xs text-emerald-100">
+                為您補發過去 {interestFeedback.days} 天的利息 +
+                {formatCurrencyDisplay(interestFeedback.amount)}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <NewsTicker news={rates.news} />
       <header
         className={`p-6 rounded-b-3xl shadow-lg text-white transition-colors duration-500 ${currentThemeData.header}`}
@@ -1721,18 +1747,24 @@ export default function FamilyBankApp() {
         )}
 
         <button
-          onClick={() => setShowAiChat(true)}
-          className={`w-full text-white p-4 rounded-2xl flex items-center justify-between shadow-lg bg-gradient-to-r ${currentThemeData.gradient}`}
+          onClick={() => setShowCalculator(true)}
+          className={`w-full p-4 rounded-2xl flex items-center justify-between shadow-sm border border-slate-100 bg-white transition-all active:scale-95 group`}
         >
           <div className="flex items-center gap-3">
-            <Sparkles className="text-yellow-300" />{" "}
+            <div
+              className={`p-2 rounded-full ${currentThemeData.accent} bg-slate-50`}
+            >
+              <Calculator size={20} />
+            </div>
             <div className="text-left">
-              <div className="font-bold">智慧小豬顧問</div>
-              <div className="text-xs opacity-80">AI 理財助手</div>
+              <div className="font-bold text-slate-700">打開複利計算機</div>
+              <div className="text-xs text-slate-400">
+                算算看未來的錢會變多少？
+              </div>
             </div>
           </div>
-          <MessageCircle />
         </button>
+
         {isParentView ? (
           <div
             className={`${currentThemeData.card} p-4 rounded-2xl shadow-sm border border-slate-200`}
@@ -1767,13 +1799,13 @@ export default function FamilyBankApp() {
               className={`${currentThemeData.card} p-4 rounded-2xl shadow-sm border border-blue-100 flex items-center justify-between`}
             >
               <div>
-                <div className="text-xs opacity-60 font-bold uppercase mb-1">
-                  下個月預計利息
+                <div className="text-xs opacity-60 font-bold uppercase mb-1 flex items-center gap-1">
+                  下個月預計利息 <Info size={12} className="opacity-50" />
                 </div>
                 <div
                   className={`text-2xl font-bold ${currentThemeData.accent}`}
                 >
-                  +{formatCurrency(monthlyInterestProj)}
+                  +{formatCurrencyDisplay(monthlyInterestProj)}
                 </div>
                 <div className="text-xs opacity-50 mt-1">
                   年利率 {formatPercent(totalRate)}
@@ -1884,7 +1916,7 @@ export default function FamilyBankApp() {
                       }`}
                     >
                       {t.type === "expense" ? "-" : "+"}
-                      {formatCurrency(t.amount)}
+                      {formatCurrencyDisplay(t.amount)}
                     </span>
                   </div>
                 ))
@@ -1892,6 +1924,15 @@ export default function FamilyBankApp() {
           </div>
         </div>
       </main>
+
+      {showCalculator && (
+        <CompoundCalculator
+          currentBalance={balance}
+          currentRate={totalRate}
+          onClose={() => setShowCalculator(false)}
+        />
+      )}
+
       {isTxModalOpen && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-4">
           <div className="bg-white w-full max-w-sm rounded-3xl p-6">
@@ -1931,15 +1972,7 @@ export default function FamilyBankApp() {
           </div>
         </div>
       )}
-      {showAiChat && (
-        <SmartPiggyAI
-          userRole={role}
-          userName={selectedAccount.name}
-          balance={balance}
-          rates={rates}
-          onClose={() => setShowAiChat(false)}
-        />
-      )}
+
       {showChangePin && (
         <ChangePinModal
           onClose={() => setShowChangePin(false)}
