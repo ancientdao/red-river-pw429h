@@ -62,7 +62,16 @@ import {
 } from "firebase/auth";
 
 // --- Firebase Configuration ---
-const firebaseConfig = JSON.parse(__firebase_config);
+const firebaseConfig = {
+  apiKey: "AIzaSyDpX498B8lJghW6fwnMVFZ5YLW_c226ppw",
+  authDomain: "home-bank-72dee.firebaseapp.com",
+  projectId: "home-bank-72dee",
+  storageBucket: "home-bank-72dee.firebasestorage.app",
+  messagingSenderId: "110879199692",
+  appId: "1:110879199692:web:526e893699926fed860d69",
+  measurementId: "G-XB26B2RHRN",
+};
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
